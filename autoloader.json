@@ -1,0 +1,16 @@
+{
+	"files":[
+		{
+			"classes":["Script"],
+			"file":"libraries/Script.php"
+		},
+		{
+			"classes":["WordpressScript"],
+			"file":"libraries/WordpressScript.php"
+		},
+		{
+			"classes":["processes\\WhichWordpress"],
+			"file":"processes/WhichWordpress.php"
+		}
+	]
+}
