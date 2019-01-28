@@ -1,6 +1,6 @@
 <?php
 namespace packages\peeker\processes;
-use packages\base\{log, IO\directory\local as directory, IO\file\local as file, process, packages};
+use packages\base\{log, IO\directory\local as directory, IO\file\local as file, process, packages, json};
 use packages\peeker\{WordpressScript, Script};
 class WhichWordpress extends process {
 	const CLEAN = 0;
@@ -8,25 +8,40 @@ class WhichWordpress extends process {
 	const REPLACE = 0;
 	const REMOVE = 1;
 	const HANDCHECK = 2;
+	const EXECUTABLE = 3;
 	protected $cleanMd5;
+	protected $infactedMd5;
 	protected $actions = [];
 	public function start() {
-		log::setLevel("debug");
+		ini_set('memory_limit','-1');
+		log::setLevel("info");
 		$log = log::getInstance();
-		$log->debug("looking in /home for users");
+		$log->info("reload actions");
+		$this->reloadAction();
+		$log->reply("Success");
+		$log->info("looking in /home for users");
 		$home = new directory("/home");
 		$users = $home->directories(false);
 		$log->reply(count($users), "found");
 		foreach ($users as $user) {
-			$log->debug($user->basename);
+			if ($user->basename <= 'doogh986') {
+				continue;
+			}
+			$log->info($user->basename);
 			$this->handleUser($user->basename);
-			break;
+			$this->rewriteAction();
 		}
 		$this->doActions();
+		foreach($users as $user) {
+			$log->info("reset permissions:");
+			shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
+			shell_exec("find {$user->getPath()}/public_html -type d -exec chmod 0755 {} \;");
+			$log->reply("Success");
+		}
 	}
 	protected function handleUser(string $user) {
 		$log = log::getInstance();
-		$log->debug("looking in \"domains\" directory");
+		$log->info("looking in \"domains\" directory");
 		$userDir = new directory("/home/".$user);
 		$domainsDirectory = $userDir->directory("domains");
 		if (!$domainsDirectory->exists()) {
@@ -40,7 +55,7 @@ class WhichWordpress extends process {
 		}
 		$log->reply(count($domains), "found");
 		foreach ($domains as $domain) {
-			$log->debug($domain->basename);
+			$log->info($domain->basename);
 			try {
 				$this->handleDomain($user, $domain->basename);
 			} catch (\Exception $e) {
@@ -48,10 +63,6 @@ class WhichWordpress extends process {
 				$log->error($e->getMessage());
 			}
 		}
-		$log->info("reset permissions:");
-		shell_exec("find -type f -exec chmod 0644 {} \;");
-		shell_exec("find -type d -exec chmod 0755 {} \;");
-		$log->reply("Success");
 	}
 	protected function globalIgnoreDirs() {
 		return ["wp-admin", "wp-includes", "wp-content"];
@@ -89,7 +100,7 @@ class WhichWordpress extends process {
 			if (!$dir->exists()) {
 				continue;
 			}
-			$log->debug("looking in ".$dir->basename." for wordpress");
+			$log->info("looking in ".$dir->basename." for wordpress");
 			$configs = $this->findWPConfigs($dir);
 			$log->reply(count($configs), "found");
 			foreach ($configs as $config) {
@@ -114,7 +125,6 @@ class WhichWordpress extends process {
 		$home = $wp->getHome();
 		$files = $home->files(true);
 		$homeLen = strlen($home->getPath());
-		$actions = [];
 		foreach($files as $file) {
 			$ext = $file->getExtension();
 			if ($ext == "ico" and substr($file->basename, 0, 1) == ".") {
@@ -122,65 +132,121 @@ class WhichWordpress extends process {
 				$log->debug("check", $reletivePath);
 				$log->reply("Infacted");
 				$log->append(", Action: Remove");
-				$actions[] = array(
-					'file' => $file,
+				$this->addAction(array(
+					'file' => $file->getRealPath(),
 					'action' => self::REMOVE,
-				);
-			}
-			if ($ext != "php") {
-				continue;
+				));
 			}
 			$reletivePath = substr($file->getPath(), $homeLen+1);
+			if ($ext == "suspected") {
+				$log->debug("check", $reletivePath);
+				$log->reply("suspected extension, Action: Remove");
+				$this->addAction(array(
+					'file' => $file->getRealPath(),
+					'action' => self::REMOVE,
+				));
+				continue;
+			}
+			$isExecutable = is_executable($file->getPath());
+			if ($ext != "php") {
+				if ($isExecutable) {
+					$log->debug($reletivePath, "is executable");
+					$this->addAction(array(
+						'file' => $file->getRealPath(),
+						'action' => self::EXECUTABLE,
+					));
+				}
+				continue;
+			}
 			$log->debug("check", $reletivePath);
 			$result = $this->isCleanFile($home, $orgWP, $reletivePath);
 			if ($result['status'] == self::CLEAN) {
+				if ($isExecutable) {
+					$log->debug($reletivePath, "is executable");
+					$this->addAction(array(
+						'file' => $file->getRealPath(),
+						'action' => self::EXECUTABLE,
+					));
+				}
 				$log->reply("Clean");
 			} else if ($result['status'] == self::INFACTED) {
 				$log->reply("Infacted");
+				if ($reletivePath == "wp-config.php" and $result['action'] == self::REMOVE) {
+					$result['action'] = self::HANDCHECK;
+				}
 				if ($result['action'] == self::REPLACE) {
 					$log->append(", Action: Replace with {$result['file']->getPath()}");
-					$actions[] = array(
-						'file' => $file,
+					$this->addAction(array(
+						'file' => $file->getRealPath(),
 						'action' => self::REPLACE,
-						'original' => $result['file']
-					);
+						'original' => $result['file']->getRealPath()
+					));
 				} else if ($result['action'] == self::REMOVE) {
 					$log->append(", Action: Remove");
-					$actions[] = array(
-						'file' => $file,
+					$this->addAction(array(
+						'file' => $file->getRealPath(),
 						'action' => self::REMOVE,
-					);
+					));
 				} else if ($result['action'] == self::HANDCHECK) {
 					$log->append(", Action: Hand-Check");
-					$actions[] = array(
-						'file' => $file,
+					$this->addAction(array(
+						'file' => $file->getRealPath(),
 						'action' => self::HANDCHECK,
-					);
+					));
 				}
 			}
 		}
-		$this->actions = array_merge($this->actions, $actions);
 	}
-	public function reloadMd5() {
+	public function reloadCleanMd5() {
 		$file = packages::package('peeker')->getFilePath('storage/private/cleanMd5.txt');
 		if (!is_file($file)) {
 			touch($file);
 		}
 		$this->cleanMd5 = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+		$this->cleanMd5 = array_unique($this->cleanMd5);
 	}
 	public function cleanMd5(string $md5) {
 		if (!$this->cleanMd5) {
-			$this->reloadMd5();
+			$this->reloadCleanMd5();
 		}
-		$this->cleanMd5[] = $md5;
-		$file = new file(packages::package('peeker')->getFilePath('storage/private/cleanMd5.txt'));
-		$file->append($md5."\n");
+		if (!in_array($md5, $this->cleanMd5)) {
+			$this->cleanMd5[] = $md5;
+			$file = new file(packages::package('peeker')->getFilePath('storage/private/cleanMd5.txt'));
+			$file->append($md5."\n");
+		}
 	}
 	public function isCleanMd5(string $md5) {
 		if (!$this->cleanMd5) {
-			$this->reloadMd5();
+			$this->reloadCleanMd5();
 		}
 		if (in_array($md5, $this->cleanMd5)){
+			return true;
+		}
+		return false;
+	}
+	public function reloadInfactedMd5() {
+		$file = packages::package('peeker')->getFilePath('storage/private/infactedMd5.txt');
+		if (!is_file($file)) {
+			touch($file);
+		}
+		$this->infactedMd5 = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+		$this->infactedMd5 = array_unique($this->infactedMd5);
+	}
+	public function infactedMd5(string $md5) {
+		if (!$this->infactedMd5) {
+			$this->reloadInfactedMd5();
+		}
+		if (!in_array($md5, $this->infactedMd5)) {
+			$this->infactedMd5[] = $md5;
+			$file = new file(packages::package('peeker')->getFilePath('storage/private/infactedMd5.txt'));
+			$file->append($md5."\n");
+		}
+	}
+	public function isInfactedMd5(string $md5) {
+		if (!$this->infactedMd5) {
+			$this->reloadInfactedMd5();
+		}
+		if (in_array($md5, $this->infactedMd5)){
 			return true;
 		}
 		return false;
@@ -188,11 +254,6 @@ class WhichWordpress extends process {
 	public function isCleanFile(directory $home, directory $src, string $file) {
 		$homeFile = $home->file($file);
 		$homeMd5 = $homeFile->md5();
-		if ($this->isCleanMd5($homeMd5)) {
-			return array(
-				'status' => self::CLEAN,
-			);
-		}
 		$srcFile = $src->file($file);
 		if ($srcFile->exists()) {
 			if ($srcFile->md5() == $homeMd5) {
@@ -217,27 +278,18 @@ class WhichWordpress extends process {
 			) {
 				$log = log::getInstance();
 				$log->debug($file, "does not in wordpress source");
-				if (substr($file, 0, 9) == "wp-admin/" or substr($file, 0, 12) == "wp-includes/") {
-					return array(
-						'status' => self::INFACTED,
-						'action' => self::REMOVE,
-					);
+				$prefixs = array('wp-admin/', 'wp-includes/', 'wp-content/languages/', 'wp-content/uploads/', 'wp-content/cache/');
+				foreach($prefixs as $prefix) {
+					if (substr($file, 0, strlen($prefix)) == $prefix) {
+						return array(
+							'status' => self::INFACTED,
+							'action' => self::REMOVE,
+						);
+					}
 				}
 			}
 		}
 		if ($homeFile->basename == "adminer.php" or $homeFile->basename == "wp.php") {
-			return array(
-				'status' => self::INFACTED,
-				'action' => self::REMOVE,
-			);
-		}
-		if (strpos($file, "wp-content/uploads") !== false) {
-			return array(
-				'status' => self::INFACTED,
-				'action' => self::REMOVE,
-			);
-		}
-		if (strpos($file, "wp-content/cache") !== false) {
 			return array(
 				'status' => self::INFACTED,
 				'action' => self::REMOVE,
@@ -256,7 +308,9 @@ class WhichWordpress extends process {
 			'add_backlink_to_post',
 			'str_split(rawurldecode(str_rot13',
 			'include \'check_is_bot.php\'',
-			'eval(gzuncompress('
+			'eval(gzuncompress(',
+			'fopen("part$i"',
+			'if (count($ret)>2000) continue;'
 		);
 		foreach($words as $word) {
 			if (stripos($content, $word) !== false) {
@@ -280,6 +334,17 @@ class WhichWordpress extends process {
 				);
 			}
 		}
+
+		if ($this->isInfactedMd5($homeMd5)) {
+			return array(
+				'status' => self::INFACTED,
+				'action' => self::REMOVE,
+			);
+		} else if ($this->isCleanMd5($homeMd5)) {
+			return array(
+				'status' => self::CLEAN,
+			);
+		}
 		$words = array(
 			'move_uploaded_file',
 			'eval',
@@ -296,13 +361,14 @@ class WhichWordpress extends process {
 				echo($homeFile->getPath()."\nIs this file is clean? [S=Show Content, Y=Clean, N=Infacted]: ");
 				$response = trim(fgets(STDIN));
 				if ($response == "S") {
-					echo $this->highlight("eval", $content)."\n";
+					echo $this->highlight($words, $content)."\n";
 				} else if ($response == "Y") {
 					$this->cleanMd5($homeMd5);
 					return array(
 						'status' => self::CLEAN,
 					);
 				} else if ($response == "N") {
+					$this->infactedMd5($homeMd5);
 					return array(
 						'status' => self::INFACTED,
 						'action' => self::REMOVE,
@@ -315,10 +381,15 @@ class WhichWordpress extends process {
 		);
 	}
 	public function highlight($needle, $haystack){
-		$ind = stripos($haystack, $needle);
-		$len = strlen($needle);
-		if($ind !== false){
-			return substr($haystack, 0, $ind) . "\033[0;31m" . substr($haystack, $ind, $len) . "\033[0m" . $this->highlight($needle, substr($haystack, $ind + $len));
+		if (!is_array($needle)) {
+			$needle = [$needle];
+		}
+		foreach($needle as $item) {
+			$ind = stripos($haystack, $item);
+			$len = strlen($item);
+			if($ind !== false){
+				$haystack = substr($haystack, 0, $ind) . "\033[0;31m" . substr($haystack, $ind, $len) . "\033[0m" . $this->highlight($item, substr($haystack, $ind + $len));
+			}
 		}
 		return $haystack;
 	}
@@ -326,7 +397,9 @@ class WhichWordpress extends process {
 		$log = log::getInstance();
 		$log->info(count($this->actions), "actions");
 		foreach($this->actions as $item) {
+			$item['file'] = new file($item['file']);
 			if ($item['action'] == self::REPLACE) {
+				$item['original'] = new file($item['original']);
 				$log->info("Copy {$item['original']->getPath()} to {$item['file']->getPath()}");
 				$item['original']->copyTo($item['file']);
 				$log->reply("Success");
@@ -334,7 +407,13 @@ class WhichWordpress extends process {
 				$log->info("Remove {$item['file']->getPath()}");
 				$item['file']->delete();
 				$log->reply("Success");
-			} else if ($item['action'] == self::HANDCHECK) {
+			} else if ($item['action'] == self::HANDCHECK or $item['action'] == self::EXECUTABLE) {
+				if ($item['action'] == self::EXECUTABLE) {
+					$log->info("This file is executable {$item['file']->getPath()}:");
+					chmod($item['file']->getPath(), 0644);
+				} else {
+					$log->info("Hand-check {$item['file']->getPath()}");
+				}
 				while(true) {
 					echo("Please check {$item['file']->getRealPath()} and type OK:");
 					$response = strtolower(trim(fgets(STDIN)));
@@ -345,5 +424,20 @@ class WhichWordpress extends process {
 				}
 			}
 		}
+		$this->actions = [];
+	}
+	private function reloadAction() {
+		$file = new file(packages::package('peeker')->getFilePath('storage/private/actions.json'));
+		$this->actions = $file->exists() ? json\decode($file->read()) : [];
+		if (!is_array($this->actions)) {
+			$this->actions = [];
+		}
+	}
+	private function addAction($action) {
+		$this->actions[] = $action;
+	}
+	private function rewriteAction() {
+		$file = new file(packages::package('peeker')->getFilePath('storage/private/actions.json'));
+		$file->write(json\encode($this->actions, json\PRETTY));
 	}
 }
