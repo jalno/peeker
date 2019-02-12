@@ -5,10 +5,13 @@ use packages\peeker\{WordpressScript, Script};
 class WhichWordpress extends process {
 	const CLEAN = 0;
 	const INFACTED = 1;
+
 	const REPLACE = 0;
 	const REMOVE = 1;
 	const HANDCHECK = 2;
 	const EXECUTABLE = 3;
+	const REPAIR = 4;
+
 	protected $cleanMd5;
 	protected $infactedMd5;
 	protected $actions = [];
@@ -24,9 +27,6 @@ class WhichWordpress extends process {
 		$users = $home->directories(false);
 		$log->reply(count($users), "found");
 		foreach ($users as $user) {
-			if ($user->basename <= 'doogh986') {
-				continue;
-			}
 			$log->info($user->basename);
 			$this->handleUser($user->basename);
 			$this->rewriteAction();
@@ -148,7 +148,7 @@ class WhichWordpress extends process {
 				continue;
 			}
 			$isExecutable = is_executable($file->getPath());
-			if ($ext != "php") {
+			if ($ext != "php" and $ext != "js") {
 				if ($isExecutable) {
 					$log->debug($reletivePath, "is executable");
 					$this->addAction(array(
@@ -192,6 +192,13 @@ class WhichWordpress extends process {
 					$this->addAction(array(
 						'file' => $file->getRealPath(),
 						'action' => self::HANDCHECK,
+					));
+				} else if ($result['action'] == self::REPAIR) {
+					$log->append(", Action: Repair, Problem: {$result['problem']}");
+					$this->addAction(array(
+						'file' => $file->getRealPath(),
+						'action' => self::REPAIR,
+						'problem' => $result['problem']
 					));
 				}
 			}
@@ -254,6 +261,7 @@ class WhichWordpress extends process {
 	public function isCleanFile(directory $home, directory $src, string $file) {
 		$homeFile = $home->file($file);
 		$homeMd5 = $homeFile->md5();
+		$ext = $homeFile->getExtension();
 		$srcFile = $src->file($file);
 		if ($srcFile->exists()) {
 			if ($srcFile->md5() == $homeMd5) {
@@ -270,7 +278,7 @@ class WhichWordpress extends process {
 					);
 				}
 			}
-		} else {
+		} elseif ($ext == "php") {
 			if (
 				!in_array($file, ["wp-config.php", "wp-config-sample.php", "wp-content/advanced-cache.php"]) and
 				substr($file, 0, 18) != "wp-content/themes/" and 
@@ -289,13 +297,34 @@ class WhichWordpress extends process {
 				}
 			}
 		}
-		if ($homeFile->basename == "adminer.php" or $homeFile->basename == "wp.php") {
+
+		if ($homeFile->basename == "adminer.php" or $homeFile->basename == "wp.php" or $homeFile->basename == "wp-build-report.php") {
 			return array(
 				'status' => self::INFACTED,
 				'action' => self::REMOVE,
 			);
 		}
 		$content = $homeFile->read();
+
+		if ($ext == "js") {
+			if (preg_match("/^var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/", $content)) {
+				return array(
+					'status' => self::INFACTED,
+					'action' => self::REPAIR,
+					'problem' => 'injectedJS'
+				);
+			}
+			return array(
+				'status' => self::CLEAN,
+			);
+		} elseif ($ext == "php") {
+			if (preg_match("/^\<\?php .{200,}/", $content)) {
+				return array(
+					'status' => self::INFACTED,
+					'action' => self::HANDCHECK,
+				);
+			}
+		}
 		if (preg_match("/\/\*[a-z0-9]+\*\/\s+\@include\s+(.*);\s+\/\*[a-z0-9]+\*/im", $content)) {
 			return array(
 				'status' => self::INFACTED,
@@ -403,11 +432,11 @@ class WhichWordpress extends process {
 				$log->info("Copy {$item['original']->getPath()} to {$item['file']->getPath()}");
 				$item['original']->copyTo($item['file']);
 				$log->reply("Success");
-			} else if ($item['action'] == self::REMOVE) {
+			} elseif ($item['action'] == self::REMOVE) {
 				$log->info("Remove {$item['file']->getPath()}");
 				$item['file']->delete();
 				$log->reply("Success");
-			} else if ($item['action'] == self::HANDCHECK or $item['action'] == self::EXECUTABLE) {
+			} elseif ($item['action'] == self::HANDCHECK or $item['action'] == self::EXECUTABLE) {
 				if ($item['action'] == self::EXECUTABLE) {
 					$log->info("This file is executable {$item['file']->getPath()}:");
 					chmod($item['file']->getPath(), 0644);
@@ -421,6 +450,25 @@ class WhichWordpress extends process {
 						$log->reply("Success");
 						break;
 					}
+				}
+			} elseif ($item['action'] == self::REPAIR) {
+				if ($item['problem'] == 'injectedJS') {
+					$log->info("Repair injected JS {$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace("/^var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);(.*)/", "$1", $content);
+					//$item['file']->basename .= ".new";
+					$item['file']->write($content);
+
+					/*while(true) {
+						echo("Please check {$item['file']->getRealPath()} and type OK:");
+						$response = strtolower(trim(fgets(STDIN)));
+						if ($response == "ok") {
+							$log->reply("Success");
+							break;
+						}
+					}
+					$item['file']->rename(substr($item['file']->basename, 0, strlen($item['file']->basename) - 4));
+					*/
 				}
 			}
 		}
