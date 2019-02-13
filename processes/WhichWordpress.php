@@ -318,7 +318,7 @@ class WhichWordpress extends process {
 				'status' => self::CLEAN,
 			);
 		} elseif ($ext == "php") {
-			if (preg_match("/^\<\?php .{200,}/", $content)) {
+			if (preg_match("/^\<\?php .{200,}/", $content) or preg_match("/var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/", $content)) {
 				return array(
 					'status' => self::INFACTED,
 					'action' => self::HANDCHECK,
