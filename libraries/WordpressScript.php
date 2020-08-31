@@ -26,7 +26,7 @@ class WordpressScript extends Script {
 		return $src;
 	}
 	public static function downloadTheme(string $name): ?Directory {
-		$repo = new Directory(Packages::package("peeker")->getFilePath("storage/private/themes/"));
+		$repo = Packages::package("peeker")->getHome()->directory("storage/private/themes");
 		if (!$repo->exists()) {
 			$repo->make(true);
 		}
