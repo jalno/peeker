@@ -41,18 +41,22 @@ class WhichWordpress extends process {
 			$users = $home->directories(false);
 			$log->reply(count($users), "found");
 		}
+		$doneUsers = [];
 		foreach ($users as $user) {
 			$log->info($user->basename);
+			try {
+				$this->handleUser($user->basename);
+				$this->rewriteAction();
+				$doneUsers[] = $user;
+			} catch (\Exception $e) {}
+		}
+		$this->doActions();
+		foreach($doneUsers as $user) {
 			$log->info("reset permissions:");
 			shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
 			shell_exec("find {$user->getPath()}/public_html -type d -exec chmod 0755 {} \;");
 			$log->reply("Success");
-			try {
-				$this->handleUser($user->basename);
-				$this->rewriteAction();
-			} catch (\Exception $e) {}
 		}
-		$this->doActions();
 	}
 	protected function handleUser(string $user) {
 		$log = log::getInstance();
@@ -139,10 +143,9 @@ class WhichWordpress extends process {
 		$log->reply("saved in", $orgWP->getPath());
 		$home = $wp->getHome();
 		$files = $home->files(true);
-		$homeLen = strlen($home->getPath());
 		foreach($files as $file) {
 			$ext = $file->getExtension();
-			$reletivePath = substr($file->getPath(), $homeLen + 1);
+			$reletivePath = substr($file->getPath(), strlen($home->getPath()) + 1);
 			if ($ext == "ico" and substr($file->basename, 0, 1) == ".") {
 				$log->debug("check", $reletivePath);
 				$log->reply("Infacted");
@@ -382,7 +385,8 @@ class WhichWordpress extends process {
 			'include \'check_is_bot.php\'',
 			'eval(gzuncompress(',
 			'fopen("part$i"',
-			'if (count($ret)>2000) continue;'
+			'if (count($ret)>2000) continue;',
+			'Class_UC_key'
 		);
 		foreach($words as $word) {
 			if (stripos($content, $word) !== false) {

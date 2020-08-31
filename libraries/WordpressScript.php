@@ -40,12 +40,17 @@ class WordpressScript extends Script {
 			"base_uri" => "http://peeker.jeyserver.com/",
 		));
 		$zipFile = new IO\file\Tmp();
-		$http->get("themes/{$name}.zip", array(
-			"save_as" => $zipFile
-		));
+		try {
+			$http->get("themes/{$name}.zip", array(
+				"save_as" => $zipFile
+			));
+		} catch (\Exception $e) {
+			return null;
+		}
 		$zip = new \ZipArchive();
-		if ($zip->open($zipFile->getPath()) === false) {
-			throw new \Exception("Cannot open zip file");
+		$open = $zip->open($zipFile->getPath());
+		if ($open !== true) {
+			throw new \Exception("Cannot open zip file: " . $open);
 		}
 		$zip->extractTo($src->getPath());
 		$zip->close();
