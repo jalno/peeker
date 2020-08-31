@@ -1,6 +1,6 @@
 <?php
 namespace packages\peeker\processes;
-use packages\base\{log, IO\directory\local as directory, IO\file\local as file, process, packages, json};
+use packages\base\{log, IO\directory\local as directory, IO\file\local as file, process, packages, json, View\Error};
 use packages\peeker\{WordpressScript, Script};
 class WhichWordpress extends process {
 	const CLEAN = 0;
@@ -15,24 +15,43 @@ class WhichWordpress extends process {
 	protected $cleanMd5;
 	protected $infactedMd5;
 	protected $actions = [];
-	public function start() {
+	public function start(array $data) {
 		ini_set('memory_limit','-1');
 		log::setLevel("info");
 		$log = log::getInstance();
-		$log->info("reload actions");
-		$this->reloadAction();
-		$log->reply("Success");
-		$log->info("looking in /home for users");
+		if (isset($data["reloadac"]) and $data["reloadac"]) {
+			$log->info("reload actions");
+			$this->reloadAction();
+			$log->reply("Success");
+		} else {
+			$log->info("No need to reload actions");
+		}
+		$users = array();
 		$home = new directory("/home");
-		$users = $home->directories(false);
-		$log->reply(count($users), "found");
+		if (isset($data["user"]) and $data["user"]) {
+			$log->info("looking for user", $data["user"]);
+			$user = $home->directory($data["user"]);
+			if (!$user->exists()) {
+				throw new Error("Unable to find any user by username " . $data["user"] . " in /home");
+			}
+			$users[] = $user;
+			$log->reply("Found");
+		} else {
+			$log->info("looking in /home for users");
+			$users = $home->directories(false);
+			$log->reply(count($users), "found");
+		}
+		$doneUsers = [];
 		foreach ($users as $user) {
 			$log->info($user->basename);
-			$this->handleUser($user->basename);
-			$this->rewriteAction();
+			try {
+				$this->handleUser($user->basename);
+				$this->rewriteAction();
+				$doneUsers[] = $user;
+			} catch (\Exception $e) {}
 		}
 		$this->doActions();
-		foreach($users as $user) {
+		foreach($doneUsers as $user) {
 			$log->info("reset permissions:");
 			shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
 			shell_exec("find {$user->getPath()}/public_html -type d -exec chmod 0755 {} \;");
@@ -46,12 +65,12 @@ class WhichWordpress extends process {
 		$domainsDirectory = $userDir->directory("domains");
 		if (!$domainsDirectory->exists()) {
 			$log->reply()->fatal("directory is not exists");
-			return;
+			throw new Error("directory is not exists");
 		}
 		$domains = $domainsDirectory->directories(false);
 		if (!$domains) {
 			$log->reply()->fatal("no domain exists");
-			return;
+			throw new Error("no domain exists");
 		}
 		$log->reply(count($domains), "found");
 		foreach ($domains as $domain) {
@@ -60,7 +79,7 @@ class WhichWordpress extends process {
 				$this->handleDomain($user, $domain->basename);
 			} catch (\Exception $e) {
 				$log->reply()->error("failed");
-				$log->error($e->getMessage());
+				$log->error($e->__toString());
 			}
 		}
 	}
@@ -124,11 +143,10 @@ class WhichWordpress extends process {
 		$log->reply("saved in", $orgWP->getPath());
 		$home = $wp->getHome();
 		$files = $home->files(true);
-		$homeLen = strlen($home->getPath());
 		foreach($files as $file) {
 			$ext = $file->getExtension();
+			$reletivePath = substr($file->getPath(), strlen($home->getPath()) + 1);
 			if ($ext == "ico" and substr($file->basename, 0, 1) == ".") {
-				$reletivePath = substr($file->getPath(), $homeLen+1);
 				$log->debug("check", $reletivePath);
 				$log->reply("Infacted");
 				$log->append(", Action: Remove");
@@ -136,9 +154,8 @@ class WhichWordpress extends process {
 					'file' => $file->getRealPath(),
 					'action' => self::REMOVE,
 				));
-			}
-			$reletivePath = substr($file->getPath(), $homeLen+1);
-			if ($ext == "suspected") {
+				continue;
+			} elseif ($ext == "suspected") {
 				$log->debug("check", $reletivePath);
 				$log->reply("suspected extension, Action: Remove");
 				$this->addAction(array(
@@ -279,9 +296,38 @@ class WhichWordpress extends process {
 				}
 			}
 		} elseif ($ext == "php") {
-			if (
+			if (substr($file, 0, 18) == "wp-content/themes/") {
+				$startFilePathPos = strpos($file, "/", 18);
+				$name = substr($file, 18, $startFilePathPos - 18);
+				try {
+					$theme = WordpressScript::downloadTheme($name);
+					if ($theme) {
+						$versions = array();
+						if (!empty($theme->files(false))) {
+							$versions = [$theme];
+						} else {
+							$versions = $theme->directories(false);
+						}
+						$isClean = false;
+						$fileRelativePath = substr($file, $startFilePathPos + 1);
+						foreach ($versions as $version) {
+							$srcFile = $version->file($fileRelativePath);
+							if ($srcFile->exists() and $srcFile->md5() == $homeMd5) {
+								$isClean = true;
+								break;
+							}
+						}
+						$res = array(
+							"status" => $isClean ? self::CLEAN : self::INFACTED,
+						);
+						if (!$isClean) {
+							$res["action"] = self::HANDCHECK;
+						}
+						return $res;
+					}
+				} catch (\Exception $e) {}
+			} elseif (
 				!in_array($file, ["wp-config.php", "wp-config-sample.php", "wp-content/advanced-cache.php"]) and
-				substr($file, 0, 18) != "wp-content/themes/" and 
 				substr($file, 0, 19) != "wp-content/plugins/" 
 			) {
 				$log = log::getInstance();
@@ -339,7 +385,8 @@ class WhichWordpress extends process {
 			'include \'check_is_bot.php\'',
 			'eval(gzuncompress(',
 			'fopen("part$i"',
-			'if (count($ret)>2000) continue;'
+			'if (count($ret)>2000) continue;',
+			'Class_UC_key'
 		);
 		foreach($words as $word) {
 			if (stripos($content, $word) !== false) {

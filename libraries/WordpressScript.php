@@ -25,6 +25,38 @@ class WordpressScript extends Script {
 		$zip->close();
 		return $src;
 	}
+	public static function downloadTheme(string $name): ?Directory {
+		$repo = Packages::package("peeker")->getHome()->directory("storage/private/themes");
+		if (!$repo->exists()) {
+			$repo->make(true);
+		}
+		$src = $repo->directory($name);
+		if ($src->exists()) {
+			return !$src->isEmpty() ? $src : null;
+		} else {
+			$src->make();
+		}
+		$http = new Client(array(
+			"base_uri" => "http://peeker.jeyserver.com/",
+		));
+		$zipFile = new IO\file\Tmp();
+		try {
+			$http->get("themes/{$name}.zip", array(
+				"save_as" => $zipFile
+			));
+		} catch (\Exception $e) {
+			return null;
+		}
+		$zip = new \ZipArchive();
+		$open = $zip->open($zipFile->getPath());
+		if ($open !== true) {
+			throw new \Exception("Cannot open zip file: " . $open);
+		}
+		$zip->extractTo($src->getPath());
+		$zip->close();
+
+		return $src;
+	}
 	/**
 	 * @var file
 	 */
