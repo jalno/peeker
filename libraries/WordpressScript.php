@@ -26,6 +26,8 @@ class WordpressScript extends Script {
 		return $src;
 	}
 	public static function downloadTheme(string $name): ?Directory {
+		$log = Log::getInstance();
+		$log->info("try find or download theme: {$name}");
 		$repo = Packages::package("peeker")->getHome()->directory("storage/private/themes");
 		if (!$repo->exists()) {
 			$repo->make(true);
@@ -36,6 +38,7 @@ class WordpressScript extends Script {
 		} else {
 			$src->make();
 		}
+		$log->info("downloading theme");
 		$http = new Client(array(
 			"base_uri" => "http://peeker.jeyserver.com/",
 		));
@@ -45,6 +48,7 @@ class WordpressScript extends Script {
 				"save_as" => $zipFile
 			));
 		} catch (\Exception $e) {
+			$log->reply()->warn("failed!");
 			return null;
 		}
 		$zip = new \ZipArchive();
@@ -56,6 +60,87 @@ class WordpressScript extends Script {
 		$zip->close();
 
 		return $src;
+	}
+	public static function downloadPlugin(string $name, string $version = null, bool $fallback = true): ?Directory {
+		$log = Log::getInstance();
+		$log->info("try find or download plugin: {$name}, version:", $version, ", fallback:", ($fallback ? "yes" : "no"));
+		$repo = Packages::package("peeker")->getHome()->directory("storage/private/plugins");
+		if (!$repo->exists()) {
+			$repo->make(true);
+		}
+		$src = $repo->directory($name);
+		if (!$src->exists()) {
+			$src->make();
+		}
+		$latest = $src->directory("latest");
+		$requestedVersionSrc = ($version ? $src->directory($version) : null);
+		if ($requestedVersionSrc) {
+			if ($requestedVersionSrc->exists()) {
+				if (!$requestedVersionSrc->isEmpty()) {
+					return $requestedVersionSrc;
+				}
+				if (!$fallback) {
+					return null;
+				}
+			} else {
+				$requestedVersionSrc->make();
+			}
+		}
+		if (!$requestedVersionSrc) {
+			if ($latest->exists()) {
+				return !$latest->isEmpty() ? $latest : null;
+			} else {
+				$latest->make();
+			}
+		}
+
+		$zipFile = new IO\file\Tmp();
+		$fileName = ($version ? "{$name}.{$version}" : $name);
+		$log->info("download file: {$fileName}");
+		$log->info("start with peeker.jeyserver.com mirror");
+		try {
+			$response = (new Client(array(
+				"base_uri" => "http://peeker.jeyserver.com/",
+			)))->get("plugins/{$fileName}.zip", array(
+				"save_as" => $zipFile,
+			));
+			if ($response->getStatusCode() != 200) {
+				throw new \Exception("http_status_code");
+			}
+			$log->reply("done");
+		} catch (\Exception $e) {
+			$log->reply()->warn("failed!", $e->getMessage());
+			$log->info("switch to downloads.wordpress.org");
+			try {
+				$response = (new Client(array(
+					"base_uri" => "https://downloads.wordpress.org/",
+				)))->get("plugin/{$fileName}.zip", array(
+					"save_as" => $zipFile,
+				));
+				if ($response->getStatusCode() != 200) {
+					throw new \Exception("http_status_code");
+				}
+				$log->reply("done");
+			} catch (\Exception $e) {
+				$log->reply()->warn("failed!", $e->getMessage());
+				if ($requestedVersionSrc and $fallback) {
+					$log->warn("try to fallback to find latest version");
+					return self::downloadPlugin($name, null, false);
+				}
+				return null;
+			}
+		}
+		$zipFile->copyTo($src->file("{$name}.zip"));
+		$zip = new \ZipArchive();
+		$open = $zip->open($zipFile->getPath());
+		if ($open !== true) {
+			throw new \Exception("Cannot open zip file: " . $open);
+		}
+		$resultFile = ($requestedVersionSrc ? $requestedVersionSrc : $latest);
+		$zip->extractTo($resultFile->getPath());
+		$zip->close();
+
+		return $resultFile;
 	}
 	/**
 	 * @var file
