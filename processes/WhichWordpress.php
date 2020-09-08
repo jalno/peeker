@@ -15,10 +15,18 @@ class WhichWordpress extends process {
 	protected $cleanMd5;
 	protected $infactedMd5;
 	protected $actions = [];
+
+	protected $wp = [];
+	protected $themes = [];
+	protected $plugins = [];
+
 	public function start(array $data) {
+		Log::setLevel("debug");
 		ini_set('memory_limit','-1');
-		log::setLevel("info");
-		$log = log::getInstance();
+		error_reporting(E_ALL);
+		ini_set("display_errors", true);
+
+		$log = Log::getInstance();
 		if (isset($data["reloadac"]) and $data["reloadac"]) {
 			$log->info("reload actions");
 			$this->reloadAction();
@@ -51,6 +59,7 @@ class WhichWordpress extends process {
 			} catch (\Exception $e) {}
 		}
 		$this->doActions();
+		return;
 		foreach($doneUsers as $user) {
 			$log->info("reset permissions:");
 			shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
@@ -130,18 +139,75 @@ class WhichWordpress extends process {
 		}
 	}
 	protected function handleWp(WordpressScript $wp) {
-		$log = log::getInstance();
-		$log->info("get version");
+		$log = Log::getInstance();
+		$log->info("get wp version");
 		$version = $wp->getWPVersion();
 		if (!$version) {
 			$log->reply()->fatal("not found");
 			throw new \Exception("cannot find wordpress version");
 		}
 		$log->reply($version);
-		$log->info("download orginal version");
+		$log->info("download original version");
 		$orgWP = WordpressScript::downloadVersion($version);
+		$this->wp = array(
+			'version' => $version,
+			'org' => $orgWP,
+		);
 		$log->reply("saved in", $orgWP->getPath());
 		$home = $wp->getHome();
+
+		$log->info("get plugins and versions");
+		$pluginsDir = $home->directory("wp-content/plugins");
+		foreach ($pluginsDir->directories(false) as $pluginDir) {
+			$log->info("plugin: {$pluginDir->basename}");
+			$pluginInfo = $this->getPluginInfo($pluginDir);
+			if (empty($pluginInfo)) {
+				$log->reply()->warn("it seems plugin is damaged!");
+				$this->plugins[$pluginDir->basename] = array(
+					'path' => $pluginDir->basename,
+				);
+				continue;
+			}
+			$log->reply("version:", $pluginInfo['version']);
+			$log->info("get original plugin");
+			$orgPlugin = null;
+			try {
+				$orgPlugin = WordpressScript::downloadPlugin($pluginDir->basename, ($pluginInfo['version'] ?? null));
+			} catch (\Exception $e) {}
+			if ($orgPlugin) {
+				$log->reply("done");
+			} else {
+				$log->reply()->warn("not found!");
+			}
+			$this->plugins[$pluginDir->basename] = array(
+				'name' => $pluginInfo['name'],
+				'path' => $pluginInfo['path'] ?? '',
+				'version' => $pluginInfo['version'] ?? '',
+				'org' => $orgPlugin,
+			);
+		}
+		$log->info("get themes");
+		$themesDir = $home->directory("wp-content/themes");
+		foreach ($themesDir->directories(false) as $themeNameDir) {
+			$log->info("theme: {$themeNameDir->basename}");
+			$log->info("download original versions of theme");
+			$theme = null;
+			try {
+				$theme = WordpressScript::downloadTheme($themeNameDir->basename);
+			} catch (\Exception $e) {}
+			if ($theme) {
+				$log->reply("done");
+			} else {
+				$log->reply()->warn("not found!");
+			}
+			$this->themes[$themeNameDir->basename] = array(
+				'name' => $themeNameDir->basename,
+				'path' => $themeNameDir->basename,
+				'org' => $theme,
+			);
+		}
+
+		$log->info("try check each file");
 		$files = $home->files(true);
 		foreach($files as $file) {
 			$ext = $file->getExtension();
@@ -176,14 +242,14 @@ class WhichWordpress extends process {
 				continue;
 			}
 			$log->debug("check", $reletivePath);
-			$result = $this->isCleanFile($home, $orgWP, $reletivePath);
+			$result = $this->isCleanFile($reletivePath, $home, $orgWP);
 			if ($result['status'] == self::CLEAN) {
 				if ($isExecutable) {
 					$log->debug($reletivePath, "is executable");
-					$this->addAction(array(
-						'file' => $file->getRealPath(),
-						'action' => self::EXECUTABLE,
-					));
+					// $this->addAction(array(
+					// 	'file' => $file->getRealPath(),
+					// 	'action' => self::EXECUTABLE,
+					// ));
 				}
 				$log->reply("Clean");
 			} else if ($result['status'] == self::INFACTED) {
@@ -196,7 +262,7 @@ class WhichWordpress extends process {
 					$this->addAction(array(
 						'file' => $file->getRealPath(),
 						'action' => self::REPLACE,
-						'original' => $result['file']->getRealPath()
+						'original' => $result['file']->getRealPath(),
 					));
 				} else if ($result['action'] == self::REMOVE) {
 					$log->append(", Action: Remove");
@@ -220,6 +286,42 @@ class WhichWordpress extends process {
 				}
 			}
 		}
+	}
+	protected function getPluginInfo(Directory $pluginDir): array {
+		$response = array();
+		$log = Log::getInstance();
+		$log->info("get info about plugin: '{$pluginDir->basename}'");
+		$log->debug("get all php files of plugin");
+		$files = array_filter($pluginDir->files(false), function ($file) {
+			return $file->getExtension() == "php";
+		});
+		$log->reply(count($files), "file found");
+		if (!$files) {
+			$log->warn("it seems plugin is damaged, cuz no has any php file!");
+			return $response;
+		}
+		$template = array(
+			'name'        => 'Plugin Name',
+			'description' => 'Description',
+			'version'     => 'Version',
+			'path'        => 'Text Domain',
+			'pluginURI'   => 'Plugin URI',
+			'author'      => 'Author',
+			'authorURI'   => 'Author URI',
+			'domainPath'  => 'Domain Path',
+			'network'     => 'Network',
+			'requiresWP'  => 'Requires at least',
+			'requiresPHP' => 'Requires PHP',
+		);
+		foreach ($files as $file) {
+			$fileData = $file->read(2048);
+			foreach ($template as $field => $regex) {
+				if (preg_match('/^[ \t\/*#@]*' . preg_quote($regex, '/') . ':(.*)$/mi', $fileData, $matches) and $matches[1]) {
+					$response[$field] = trim($matches[1]);
+				}
+			}
+		}
+		return $response;
 	}
 	public function reloadCleanMd5() {
 		$file = packages::package('peeker')->getFilePath('storage/private/cleanMd5.txt');
@@ -275,7 +377,7 @@ class WhichWordpress extends process {
 		}
 		return false;
 	}
-	public function isCleanFile(directory $home, directory $src, string $file) {
+	public function isCleanFile(string $file, directory $home, directory $src) {
 		$homeFile = $home->file($file);
 		$homeMd5 = $homeFile->md5();
 		$ext = $homeFile->getExtension();
@@ -299,8 +401,8 @@ class WhichWordpress extends process {
 			if (substr($file, 0, 18) == "wp-content/themes/") {
 				$startFilePathPos = strpos($file, "/", 18);
 				$name = substr($file, 18, $startFilePathPos - 18);
-				try {
-					$theme = WordpressScript::downloadTheme($name);
+				if (!in_array($name, ["twentytwenty", "twentynineteen"])) {
+					$theme = $this->themes[$name]['org'];
 					if ($theme) {
 						$versions = array();
 						if (!empty($theme->files(false))) {
@@ -313,6 +415,7 @@ class WhichWordpress extends process {
 						foreach ($versions as $version) {
 							$srcFile = $version->file($fileRelativePath);
 							if ($srcFile->exists() and $srcFile->md5() == $homeMd5) {
+								$this->cleanMd5($homeMd5);
 								$isClean = true;
 								break;
 							}
@@ -325,15 +428,41 @@ class WhichWordpress extends process {
 						}
 						return $res;
 					}
-				} catch (\Exception $e) {}
-			} elseif (
-				!in_array($file, ["wp-config.php", "wp-config-sample.php", "wp-content/advanced-cache.php"]) and
-				substr($file, 0, 19) != "wp-content/plugins/" 
-			) {
-				$log = log::getInstance();
-				$log->debug($file, "does not in wordpress source");
+				}
+			} elseif (substr($file, 0, 19) == "wp-content/plugins/") {
+				$startFilePathPos = strpos($file, "/", 19);
+				$pluginName = substr($file, 19, $startFilePathPos - 19);
+				$plugin = $this->plugins[$pluginName]['org'];
+				if ($plugin) {
+					$fileRelativePath = substr($file, 19);
+					$homeFile = $home->directory("wp-content/plugins/")->file($fileRelativePath);
+					$homeMd5 = $homeFile->md5();
+					$srcFile = $plugin->file($fileRelativePath);
+					$result = array(
+						"status" => self::INFACTED,
+					);
+					if ($srcFile->exists()) {
+						if ($srcFile->md5() == $homeMd5) {
+							$this->cleanMd5($homeMd5);
+							$result["status"] = self::CLEAN;
+						} else {
+							$result["action"] = self::REPLACE;
+							$result["file"] = $srcFile;
+						}
+					} else {
+						$result["status"] = self::CLEAN;
+						$result["action"] = self::REMOVE;
+					}
+					if ($srcFile->exists() and $srcFile->md5() == $homeMd5) {
+						$isClean = true;
+					}
+					return $result;
+				}
+			} elseif (!in_array($file, ["wp-config.php", "wp-config-sample.php", "wp-content/advanced-cache.php"])) {
+				$log = Log::getInstance();
+				$log->debug($file, "does not in wordpress source, themes and plugins");
 				$prefixs = array('wp-admin/', 'wp-includes/', 'wp-content/languages/', 'wp-content/uploads/', 'wp-content/cache/');
-				foreach($prefixs as $prefix) {
+				foreach ($prefixs as $prefix) {
 					if (substr($file, 0, strlen($prefix)) == $prefix) {
 						return array(
 							'status' => self::INFACTED,
@@ -371,7 +500,11 @@ class WhichWordpress extends process {
 				);
 			}
 		}
-		if (preg_match("/\/\*[a-z0-9]+\*\/\s+\@include\s+(.*);\s+\/\*[a-z0-9]+\*/im", $content)) {
+		if (
+			preg_match("/\/\*[a-z0-9]+\*\/\s+\@include\s+(.*);\s+\/\*[a-z0-9]+\*/im", $content) or
+			preg_match("/108.+111.+119.+101.+114.+98.+101.+102.+111.+114.+119.+97.+114.+100.+101.+110/", $content) or
+			preg_match('/<script.+ src=[\"\'].+lowerbeforwarden.+[\"\'].*><\/script>/i', $content)
+		) {
 			return array(
 				'status' => self::INFACTED,
 				'action' => self::REMOVE,
@@ -471,7 +604,7 @@ class WhichWordpress extends process {
 	}
 	public function doActions() {
 		$log = log::getInstance();
-		$log->info(count($this->actions), "actions");
+		$log->info(count($this->actions), " actions");
 		foreach($this->actions as $item) {
 			$item['file'] = new file($item['file']);
 			if ($item['action'] == self::REPLACE) {
@@ -522,7 +655,7 @@ class WhichWordpress extends process {
 		$this->actions = [];
 	}
 	private function reloadAction() {
-		$file = new file(packages::package('peeker')->getFilePath('storage/private/actions.json'));
+		$file = Packages::package('peeker')->getFile('storage/private/actions.json');
 		$this->actions = $file->exists() ? json\decode($file->read()) : [];
 		if (!is_array($this->actions)) {
 			$this->actions = [];
@@ -532,7 +665,11 @@ class WhichWordpress extends process {
 		$this->actions[] = $action;
 	}
 	private function rewriteAction() {
-		$file = new file(packages::package('peeker')->getFilePath('storage/private/actions.json'));
+		$file = Packages::package('peeker')->getFile('storage/private/actions.json');
+		$directory = $file->getDirectory();
+		if (!$directory->exists()) {
+			$directory->make(true);
+		}
 		$file->write(json\encode($this->actions, json\PRETTY));
 	}
 }
