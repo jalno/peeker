@@ -59,7 +59,6 @@ class WhichWordpress extends process {
 			} catch (\Exception $e) {}
 		}
 		$this->doActions();
-		return;
 		foreach($doneUsers as $user) {
 			$log->info("reset permissions:");
 			shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
