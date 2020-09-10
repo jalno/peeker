@@ -61,8 +61,9 @@ class WordpressScript extends Script {
 
 		return $src;
 	}
-	public static function downloadPlugin(string $name, string $version = null, bool $fallback = true): ?Directory {
+	public static function downloadPlugin(string $pluginName, string $version = null, bool $fallback = true): ?Directory {
 		$log = Log::getInstance();
+		$name = $pluginName;
 		if (substr($name, -strlen("-master")) == "-master") {
 			$name = substr($name, 0, -strlen("-master"));
 		}
@@ -150,10 +151,10 @@ class WordpressScript extends Script {
 		$zip->extractTo($resultDirectory->getPath());
 		$zip->close();
 
-		$sameNameDirectory = $resultDirectory->directory($name);
+		$sameNameDirectory = $resultDirectory->directory($pluginName);
 		if ($sameNameDirectory->exists()) {
 			$sameNameDirectory->move($resultDirectory->getDirectory());
-			$resultDirectory->getDirectory()->directory($name)->rename($resultDirectory->basename);
+			$resultDirectory->getDirectory()->directory($pluginName)->rename($resultDirectory->basename);
 		}
 
 		return $resultDirectory;
