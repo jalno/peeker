@@ -63,6 +63,9 @@ class WordpressScript extends Script {
 	}
 	public static function downloadPlugin(string $name, string $version = null, bool $fallback = true): ?Directory {
 		$log = Log::getInstance();
+		if (substr($name, -strlen("-master")) == "-master") {
+			$name = substr($name, 0, -strlen("-master"));
+		}
 		$log->info("try find or download plugin: {$name}, version:", $version, ", fallback:", ($fallback ? "yes" : "no"));
 		$repo = Packages::package("peeker")->getHome()->directory("storage/private/plugins");
 		if (!$repo->exists()) {
@@ -123,6 +126,14 @@ class WordpressScript extends Script {
 				$log->reply("done");
 			} catch (\Exception $e) {
 				$log->reply()->warn("failed!", $e->getMessage());
+				if ($requestedVersionSrc) {
+					$requestedVersionSrc->delete(true);
+				} else {
+					$latest->delete(true);
+				}
+				if (!$src->files(true)) {
+					$src->delete(true);
+				}
 				if ($requestedVersionSrc and $fallback) {
 					$log->warn("try to fallback to find latest version");
 					return self::downloadPlugin($name, null, false);
@@ -130,17 +141,22 @@ class WordpressScript extends Script {
 				return null;
 			}
 		}
-		$zipFile->copyTo($src->file("{$name}.zip"));
 		$zip = new \ZipArchive();
 		$open = $zip->open($zipFile->getPath());
 		if ($open !== true) {
 			throw new \Exception("Cannot open zip file: " . $open);
 		}
-		$resultFile = ($requestedVersionSrc ? $requestedVersionSrc : $latest);
-		$zip->extractTo($resultFile->getPath());
+		$resultDirectory = ($requestedVersionSrc ? $requestedVersionSrc : $latest);
+		$zip->extractTo($resultDirectory->getPath());
 		$zip->close();
 
-		return $resultFile;
+		$sameNameDirectory = $resultDirectory->directory($name);
+		if ($sameNameDirectory->exists()) {
+			$sameNameDirectory->move($resultDirectory->getDirectory());
+			$resultDirectory->getDirectory()->directory($name)->rename($resultDirectory->basename);
+		}
+
+		return $resultDirectory;
 	}
 	/**
 	 * @var file

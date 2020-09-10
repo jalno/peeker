@@ -1,7 +1,7 @@
 <?php
 namespace packages\peeker\processes;
 use packages\base\{log, IO\directory\local as directory, IO\file\local as file, process, packages, json, View\Error};
-use packages\peeker\{WordpressScript, Script};
+use packages\peeker\{WordpressScript, Script, PluginException};
 class WhichWordpress extends process {
 	const CLEAN = 0;
 	const INFACTED = 1;
@@ -19,6 +19,7 @@ class WhichWordpress extends process {
 	protected $wp = [];
 	protected $themes = [];
 	protected $plugins = [];
+	protected $failedPluginDownloads = [];
 
 	public function start(array $data) {
 		Log::setLevel("debug");
@@ -61,8 +62,8 @@ class WhichWordpress extends process {
 		$this->doActions();
 		foreach($doneUsers as $user) {
 			$log->info("reset permissions:");
-			shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
-			shell_exec("find {$user->getPath()}/public_html -type d -exec chmod 0755 {} \;");
+			//shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
+			//shell_exec("find {$user->getPath()}/public_html -type d -exec chmod 0755 {} \;");
 			$log->reply("Success");
 		}
 	}
@@ -147,88 +148,22 @@ class WhichWordpress extends process {
 		}
 		$log->reply($version);
 		$log->info("download original version");
-		$orgWP = WordpressScript::downloadVersion($version);
 		$this->wp = array(
 			'version' => $version,
-			'org' => $orgWP,
+			'org' => WordpressScript::downloadVersion($version),
 		);
-		$log->reply("saved in", $orgWP->getPath());
+		$log->reply("saved in", $this->wp['org']->getPath());
 		$home = $wp->getHome();
 
-		$log->info("get plugins and versions");
-		$pluginsDir = $home->directory("wp-content/plugins");
-		foreach ($pluginsDir->directories(false) as $pluginDir) {
-			$log->info("plugin: {$pluginDir->basename}");
-			$pluginInfo = $this->getPluginInfo($pluginDir);
-			if (empty($pluginInfo)) {
-				$log->reply()->warn("it seems plugin is damaged!");
-				$this->plugins[$pluginDir->basename] = array(
-					'path' => $pluginDir->basename,
-				);
-				continue;
-			}
-			$log->reply("version:", $pluginInfo['version']);
-			$log->info("get original plugin");
-			$orgPlugin = null;
-			try {
-				$orgPlugin = WordpressScript::downloadPlugin($pluginDir->basename, ($pluginInfo['version'] ?? null));
-			} catch (\Exception $e) {}
-			if ($orgPlugin) {
-				$log->reply("done");
-			} else {
-				$log->reply()->warn("not found!");
-			}
-			$this->plugins[$pluginDir->basename] = array(
-				'name' => $pluginInfo['name'],
-				'path' => $pluginInfo['path'] ?? '',
-				'version' => $pluginInfo['version'] ?? '',
-				'org' => $orgPlugin,
-			);
-		}
-		$log->info("get themes");
-		$themesDir = $home->directory("wp-content/themes");
-		foreach ($themesDir->directories(false) as $themeNameDir) {
-			$log->info("theme: {$themeNameDir->basename}");
-			$log->info("download original versions of theme");
-			$theme = null;
-			try {
-				$theme = WordpressScript::downloadTheme($themeNameDir->basename);
-			} catch (\Exception $e) {}
-			if ($theme) {
-				$log->reply("done");
-			} else {
-				$log->reply()->warn("not found!");
-			}
-			$this->themes[$themeNameDir->basename] = array(
-				'name' => $themeNameDir->basename,
-				'path' => $themeNameDir->basename,
-				'org' => $theme,
-			);
-		}
+		$this->preparePlugins($home);
+		$this->prepareThemes($home);
+		
 
 		$log->info("try check each file");
 		$files = $home->files(true);
 		foreach($files as $file) {
 			$ext = $file->getExtension();
-			$reletivePath = substr($file->getPath(), strlen($home->getPath()) + 1);
-			if ($ext == "ico" and substr($file->basename, 0, 1) == ".") {
-				$log->debug("check", $reletivePath);
-				$log->reply("Infacted");
-				$log->append(", Action: Remove");
-				$this->addAction(array(
-					'file' => $file->getRealPath(),
-					'action' => self::REMOVE,
-				));
-				continue;
-			} elseif ($ext == "suspected") {
-				$log->debug("check", $reletivePath);
-				$log->reply("suspected extension, Action: Remove");
-				$this->addAction(array(
-					'file' => $file->getRealPath(),
-					'action' => self::REMOVE,
-				));
-				continue;
-			}
+			$reletivePath = $this->getRelativePath($home, $file);
 			$isExecutable = is_executable($file->getPath());
 			if ($ext != "php" and $ext != "js") {
 				if ($isExecutable) {
@@ -238,20 +173,12 @@ class WhichWordpress extends process {
 						'action' => self::EXECUTABLE,
 					));
 				}
-				continue;
 			}
 			$log->debug("check", $reletivePath);
-			$result = $this->isCleanFile($reletivePath, $home, $orgWP);
+			$result = $this->isCleanFile($reletivePath, $home);
 			if ($result['status'] == self::CLEAN) {
-				if ($isExecutable) {
-					$log->debug($reletivePath, "is executable");
-					// $this->addAction(array(
-					// 	'file' => $file->getRealPath(),
-					// 	'action' => self::EXECUTABLE,
-					// ));
-				}
 				$log->reply("Clean");
-			} else if ($result['status'] == self::INFACTED) {
+			} elseif ($result['status'] == self::INFACTED) {
 				$log->reply("Infacted");
 				if ($reletivePath == "wp-config.php" and $result['action'] == self::REMOVE) {
 					$result['action'] = self::HANDCHECK;
@@ -271,10 +198,15 @@ class WhichWordpress extends process {
 					));
 				} else if ($result['action'] == self::HANDCHECK) {
 					$log->append(", Action: Hand-Check");
-					$this->addAction(array(
-						'file' => $file->getRealPath(),
-						'action' => self::HANDCHECK,
-					));
+					$isCleanMd5 = $this->isCleanMd5($file->md5());
+					if ($isCleanMd5) {
+						$log->append(", Md5 is clean, Ignore");
+					} else {
+						$this->addAction(array(
+							'file' => $file->getRealPath(),
+							'action' => self::HANDCHECK,
+						));
+					}
 				} else if ($result['action'] == self::REPAIR) {
 					$log->append(", Action: Repair, Problem: {$result['problem']}");
 					$this->addAction(array(
@@ -376,207 +308,97 @@ class WhichWordpress extends process {
 		}
 		return false;
 	}
-	public function isCleanFile(string $file, directory $home, directory $src) {
+	public function isCleanFile(string $file, directory $home): array {
 		$homeFile = $home->file($file);
-		$homeMd5 = $homeFile->md5();
+
 		$ext = $homeFile->getExtension();
-		$srcFile = $src->file($file);
-		if ($srcFile->exists()) {
-			if ($srcFile->md5() == $homeMd5) {
-				$this->cleanMd5($homeMd5);
-				return array(
-					'status' => self::CLEAN,
-				);
-			} else {
-				if ($file != "wp-includes/version.php") {
-					return array(
-						'status' => self::INFACTED,
-						'action' => self::REPLACE,
-						'file' => $srcFile,
-					);
-				}
-			}
-		} elseif ($ext == "php") {
-			if (substr($file, 0, 18) == "wp-content/themes/") {
-				$startFilePathPos = strpos($file, "/", 18);
-				$name = substr($file, 18, $startFilePathPos - 18);
-				if (!in_array($name, ["twentytwenty", "twentynineteen"])) {
-					$theme = $this->themes[$name]['org'];
-					if ($theme) {
-						$versions = array();
-						if (!empty($theme->files(false))) {
-							$versions = [$theme];
-						} else {
-							$versions = $theme->directories(false);
-						}
-						$isClean = false;
-						$fileRelativePath = substr($file, $startFilePathPos + 1);
-						foreach ($versions as $version) {
-							$srcFile = $version->file($fileRelativePath);
-							if ($srcFile->exists() and $srcFile->md5() == $homeMd5) {
-								$this->cleanMd5($homeMd5);
-								$isClean = true;
-								break;
-							}
-						}
-						$res = array(
-							"status" => $isClean ? self::CLEAN : self::INFACTED,
-						);
-						if (!$isClean) {
-							$res["action"] = self::HANDCHECK;
-						}
-						return $res;
-					}
-				}
-			} elseif (substr($file, 0, 19) == "wp-content/plugins/") {
-				$startFilePathPos = strpos($file, "/", 19);
-				$pluginName = substr($file, 19, $startFilePathPos - 19);
-				$plugin = $this->plugins[$pluginName]['org'];
-				if ($plugin) {
-					$fileRelativePath = substr($file, 19);
-					$homeFile = $home->directory("wp-content/plugins/")->file($fileRelativePath);
-					$homeMd5 = $homeFile->md5();
-					$srcFile = $plugin->file($fileRelativePath);
-					$result = array(
-						"status" => self::INFACTED,
-					);
-					if ($srcFile->exists()) {
-						if ($srcFile->md5() == $homeMd5) {
-							$this->cleanMd5($homeMd5);
-							$result["status"] = self::CLEAN;
-						} else {
-							$result["action"] = self::REPLACE;
-							$result["file"] = $srcFile;
-						}
-					} else {
-						$result["status"] = self::CLEAN;
-						$result["action"] = self::REMOVE;
-					}
-					if ($srcFile->exists() and $srcFile->md5() == $homeMd5) {
-						$isClean = true;
-					}
-					return $result;
-				}
-			} elseif (!in_array($file, ["wp-config.php", "wp-config-sample.php", "wp-content/advanced-cache.php"])) {
-				$log = Log::getInstance();
-				$log->debug($file, "does not in wordpress source, themes and plugins");
-				$prefixs = array('wp-admin/', 'wp-includes/', 'wp-content/languages/', 'wp-content/uploads/', 'wp-content/cache/');
-				foreach ($prefixs as $prefix) {
-					if (substr($file, 0, strlen($prefix)) == $prefix) {
-						return array(
-							'status' => self::INFACTED,
-							'action' => self::REMOVE,
-						);
-					}
-				}
-			}
-		}
-
-		if ($homeFile->basename == "adminer.php" or $homeFile->basename == "wp.php" or $homeFile->basename == "wp-build-report.php") {
+		if ($ext == "ico" and substr($homeFile->basename, 0, 1) == ".") {
 			return array(
 				'status' => self::INFACTED,
+				'file' => $homeFile->getRealPath(),
 				'action' => self::REMOVE,
 			);
 		}
-		$content = $homeFile->read();
-
-		if ($ext == "js") {
-			if (preg_match("/^var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/", $content)) {
-				return array(
-					'status' => self::INFACTED,
-					'action' => self::REPAIR,
-					'problem' => 'injectedJS'
-				);
-			}
-			return array(
-				'status' => self::CLEAN,
-			);
-		} elseif ($ext == "php") {
-			if (preg_match("/^\<\?php .{200,}/", $content) or preg_match("/var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/", $content)) {
-				return array(
-					'status' => self::INFACTED,
-					'action' => self::HANDCHECK,
-				);
-			}
-		}
-		if (
-			preg_match("/\/\*[a-z0-9]+\*\/\s+\@include\s+(.*);\s+\/\*[a-z0-9]+\*/im", $content) or
-			preg_match("/108.+111.+119.+101.+114.+98.+101.+102.+111.+114.+119.+97.+114.+100.+101.+110/", $content) or
-			preg_match('/<script.+ src=[\"\'].+lowerbeforwarden.+[\"\'].*><\/script>/i', $content)
-		) {
+		if ($ext == "suspected") {
 			return array(
 				'status' => self::INFACTED,
+				'file' => $homeFile->getRealPath(),
 				'action' => self::REMOVE,
 			);
 		}
-		$words = array(
-			'is_joomla',
-			'testtrue',
-			'add_backlink_to_post',
-			'str_split(rawurldecode(str_rot13',
-			'include \'check_is_bot.php\'',
-			'eval(gzuncompress(',
-			'fopen("part$i"',
-			'if (count($ret)>2000) continue;',
-			'Class_UC_key'
+		if ($homeFile->basename == "log.txt" or $homeFile->basename == "log.zip") {
+			return array(
+				'status' => self::INFACTED,
+				'file' => $homeFile->getRealPath(),
+				'action' => self::REMOVE,
+			);
+		}
+
+		$result = $this->isCleanWPFile($homeFile, $home);
+		if ($result) {
+			return $result;
+		}
+		if ($ext == "php") {
+			$result = $this->isCleanPHPFile($homeFile, $home);
+			if ($result) {
+				return $result;
+			}
+		} elseif ($ext == "js" or $ext == "json") {
+			$result = $this->isCleanJSFile($homeFile, $home);
+			if ($result) {
+				return $result;
+			}
+		}
+		return array(
+			'status' => self::CLEAN,
 		);
-		foreach($words as $word) {
-			if (stripos($content, $word) !== false) {
-				return array(
-					'status' => self::INFACTED,
-					'action' => self::REMOVE,
-				);
-			}
-		}
-		$words = array(
-			'mapilo.net',
-			'theme_temp_setup',
-			'div_code_name',
-			'start_wp_theme_tmp',
-		);
-		foreach($words as $word) {
-			if (stripos($content, $word) !== false) {
-				return array(
-					'status' => self::INFACTED,
-					'action' => self::HANDCHECK,
-				);
-			}
-		}
+	}
 
-		if ($this->isInfactedMd5($homeMd5)) {
-			return array(
-				'status' => self::INFACTED,
-				'action' => self::REMOVE,
-			);
-		} else if ($this->isCleanMd5($homeMd5)) {
+	public function isCleanWPFile(File $file, Directory $home): ?array {
+		$log = Log::getInstance();
+		$relativePath = $this->getRelativePath($home, $file);
+		$original = $this->wp['org']->file($relativePath);
+		if (!$original->exists()) {
+			return null;
+		}
+		if ($original->md5() == $file->md5()) {
 			return array(
 				'status' => self::CLEAN,
 			);
 		}
-		$words = array(
-			'move_uploaded_file',
-			'eval',
+		return array(
+			'status' => self::INFACTED,
+			'action' => self::REPLACE,
+			'file' => $original,
 		);
-		$found = false;
-		foreach($words as $word) {
-			if (stripos($content, $word) !== false) {
-				$found = true;
-				break;
+	}
+	public function isCleanPHPFile(File $file, Directory $home): ?array {
+		$log = Log::getInstance();
+		$badNames = ["adminer.php", "wp.php", "wpconfig.bak.php", "wp-build-report.php", "wp-stream.php"];
+		if (in_array($file->basename, $badNames)) {
+			return array(
+				'status' => self::INFACTED,
+				'action' => self::REMOVE,
+			);
+		}
+
+		$relativePath = $this->getRelativePath($home, $file);
+		if (preg_match("/^wp-content\/themes\/(.+)\//", $relativePath, $matches)) {
+			$result = $this->isCleanThemePHPFile($matches[1], $file, $home);
+			if ($result) {
+				return $result;
 			}
 		}
-		if ($found) {
-			while(true) {
-				echo($homeFile->getPath()."\nIs this file is clean? [S=Show Content, Y=Clean, N=Infacted]: ");
-				$response = trim(fgets(STDIN));
-				if ($response == "S") {
-					echo $this->highlight($words, $content)."\n";
-				} else if ($response == "Y") {
-					$this->cleanMd5($homeMd5);
-					return array(
-						'status' => self::CLEAN,
-					);
-				} else if ($response == "N") {
-					$this->infactedMd5($homeMd5);
+		if (preg_match("/^wp-content\/plugins\/(.+)\//", $relativePath, $matches)) {
+			$result = $this->isCleanPluginPHPFile($matches[1], $file, $home);
+			if ($result) {
+				return $result;
+			}
+		}
+		if (!in_array($relativePath, ["wp-config.php", "wp-config-sample.php", "wp-content/advanced-cache.php"])) {
+			$prefixs = array('wp-admin/', 'wp-includes/', 'wp-content/languages/', 'wp-content/uploads/', 'wp-content/cache/');
+			foreach ($prefixs as $prefix) {
+				if (substr($relativePath, 0, strlen($prefix)) == $prefix) {
 					return array(
 						'status' => self::INFACTED,
 						'action' => self::REMOVE,
@@ -584,10 +406,336 @@ class WhichWordpress extends process {
 				}
 			}
 		}
+		$rules = array(
+			array(
+				'type' => 'exact',
+				'needle' => 'is_joomla',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'testtrue',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'add_backlink_to_post',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'str_split(rawurldecode(str_rot13',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'include \'check_is_bot.php\'',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'eval(gzuncompress(',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'fopen("part$i"',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'if (count($ret)>2000) continue;',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'Class_UC_key',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'LoginWall',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'CMSmap',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'file_put_contents(\'lte_\',\'<?php \'.$lt)',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'go go go',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/<script.*>\s*Element.prototype.appendAfter =.+\)\)\[0\].appendChild\(elem\);}\)\(\);<\/script>/',
+				'action' => self::REPAIR,
+				'problem' => 'nasty-js-virues-in-php'
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/^Element.prototype.appendAfter =.+\)\)\[0\].appendChild\(elem\);}\)\(\);/",
+				'action' => self::REPAIR,
+				'problem' => 'nasty-js-virues',
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/function .*=substr\(.*\(int\)\(hex2bin\(.*eval\(eval\(eval\(eval/',
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/\/\*[a-z0-9]+\*\/\s+\@include\s+(.*);\s+\/\*[a-z0-9]+\*/im",
+				'action' => self::REMOVE
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/108.+111.+119.+101.+114.+98.+101.+102.+111.+114.+119.+97.+114.+100.+101.+110/",
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/^<script .* src=.*lowerbeforwarden.*<\?php/i',
+				'action' => self::REPAIR,
+				'problem' => 'injected-lowerbeforwarden-php'
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/^<script .* src=.*lowerbeforwarden.*/i',
+				'action' => self::REPAIR,
+				'problem' => 'injected-lowerbeforwarden-html'
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/<script.+ src=[\"\'].+lowerbeforwarden.+[\"\'].*><\/script>/i',
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'exact',
+				'needle' => '"_F"."IL"."ES"',
+				'action' => self::REMOVE
+			),
+
+			array(
+				'type' => 'exact',
+				'needle' => 'mapilo.net',
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'theme_temp_setup',
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'div_code_name',
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'start_wp_theme_tmp',
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/^\<\?php .{200,}/",
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/",
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'exact',
+				'needle' => 'move_uploaded_file',
+				'action' => 'hotcheck'
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/\Weval\s*\(/',
+				'action' => 'hotcheck'
+			),
+		);
+		$result = $this->checkFileContent($rules, $file);
+		if ($result) {
+			return $result;
+		}
 		return array(
 			'status' => self::CLEAN,
 		);
 	}
+
+	public function isCleanJSFile(File $file, Directory $home): ?array {
+		
+		$relativePath = $this->getRelativePath($home, $file);
+		if (preg_match("/^wp-content\/themes\/(.+)\//", $relativePath, $matches)) {
+			$result = $this->isCleanThemeJSFile($matches[1], $file, $home);
+			if ($result) {
+				return $result;
+			}
+		}
+		if (preg_match("/^wp-content\/plugins\/(.+)\//", $relativePath, $matches)) {
+			$result = $this->isCleanPluginJSFile($matches[1], $file, $home);
+			if ($result) {
+				return $result;
+			}
+		}
+
+		$rules = array(
+			array(
+				'type' => 'pattern',
+				'needle' => "/^Element.prototype.appendAfter =.+\)\)\[0\].appendChild\(elem\);}\)\(\);/",
+				'action' => self::REPAIR,
+				'problem' => 'nasty-js-virues',
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/108.+111.+119.+101.+114.+98.+101.+102.+111.+114.+119.+97.+114.+100.+101.+110/",
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/lowerbeforwarden/i',
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/",
+				'action' => self::REPAIR,
+				'problem' => 'injectedJS',
+			),
+		);
+		$result = $this->checkFileContent($rules, $file);
+		if ($result) {
+			return $result;
+		}
+		return array(
+			'status' => self::CLEAN,
+		);
+	}
+
+	public function isCleanThemePHPFile(string $theme, File $file, Directory $home): ?array {
+		if (in_array($theme, ["twentytwenty", "twentynineteen"])) {
+			return array(
+				'status' => self::CLEAN,
+			);
+		}
+		if (!isset($this->themes[$theme])) {
+			return null;
+		}
+		$relativePath = $this->getRelativePath($home->directory("wp-content/themes/{$theme}"), $file);
+		if (in_array($relativePath, ['header.php', 'single.php'])) {
+			return null;
+		}
+		$original = $this->themes[$theme]['version']->file($relativePath);
+		if (!$original->exists()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::HANDCHECK,
+			);
+		}
+		if ($original->md5() != $file->md5()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::HANDCHECK,
+			);
+		}
+		return null;
+	}
+
+	public function isCleanPluginPHPFile(string $plugin, File $file, Directory $home): ?array {
+		if (!isset($this->plugins[$plugin])) {
+			return null;
+		}
+		if (isset($this->plugins[$plugin]['deleted'])) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::REMOVE,
+			);
+		}
+		$relativePath = $this->getRelativePath($home->directory("wp-content/plugins/{$plugin}"), $file);
+		$original = $this->plugins[$plugin]['org']->file($relativePath);
+		if (!$original->exists()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::REMOVE,
+			);
+		}
+		if ($original->md5() != $file->md5()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::REPLACE,
+				"file" => $original,
+			);
+		}
+		return array(
+			"status" => self::CLEAN,
+		);
+	}
+
+	public function isCleanThemeJSFile(string $theme, File $file, Directory $home): ?array {
+		if (in_array($theme, ["twentytwenty", "twentynineteen"])) {
+			return array(
+				'status' => self::CLEAN,
+			);
+		}
+		if (!isset($this->themes[$theme])) {
+			return null;
+		}
+		$relativePath = $this->getRelativePath($home->directory("wp-content/themes/{$theme}"), $file);
+		$original = $this->themes[$theme]['version']->file($relativePath);
+		if (!$original->exists()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::HANDCHECK,
+			);
+		}
+		if ($original->md5() != $file->md5()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::HANDCHECK,
+			);
+		}
+		return null;
+	}
+
+	public function isCleanPluginJSFile(string $plugin, File $file, Directory $home): ?array {
+		if (!isset($this->plugins[$plugin])) {
+			return null;
+		}
+		if (isset($this->plugins[$plugin]['deleted'])) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::REMOVE,
+			);
+		}
+		$relativePath = $this->getRelativePath($home->directory("wp-content/plugins/{$plugin}"), $file);
+		$original = $this->plugins[$plugin]['org']->file($relativePath);
+		if (!$original->exists()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::REMOVE,
+			);
+		}
+		if ($original->md5() != $file->md5()) {
+			return array(
+				"status" => self::INFACTED,
+				"action" => self::REPLACE,
+				"file" => $original,
+			);
+		}
+		return array(
+			"status" => self::CLEAN,
+		);
+	}
+
 	public function highlight($needle, $haystack){
 		if (!is_array($needle)) {
 			$needle = [$needle];
@@ -602,19 +750,28 @@ class WhichWordpress extends process {
 		return $haystack;
 	}
 	public function doActions() {
-		$log = log::getInstance();
+		$log = Log::getInstance();
 		$log->info(count($this->actions), " actions");
 		foreach($this->actions as $item) {
-			$item['file'] = new file($item['file']);
+			$item['file'] = isset($item['file']) ? new file($item['file']) : null;
+			$item['directory'] = isset($item['directory']) ? new Directory($item['directory']) : null;
 			if ($item['action'] == self::REPLACE) {
 				$item['original'] = new file($item['original']);
 				$log->info("Copy {$item['original']->getPath()} to {$item['file']->getPath()}");
+				if (!$item['file']->getDirectory()->exists()) {
+					$item['file']->getDirectory()->make(true);
+				}
 				$item['original']->copyTo($item['file']);
 				$log->reply("Success");
 			} elseif ($item['action'] == self::REMOVE) {
-				$log->info("Remove {$item['file']->getPath()}");
-				$item['file']->delete();
-				$log->reply("Success");
+				$target = $item['file'] ?? $item['directory'];
+				$log->info("Remove {$target->getPath()}");
+				if ($target->exists()) {
+					$target->delete(true);
+					$log->reply("Success");
+				} else {
+					$log->reply("Already deleted");
+				}
 			} elseif ($item['action'] == self::HANDCHECK or $item['action'] == self::EXECUTABLE) {
 				if ($item['action'] == self::EXECUTABLE) {
 					$log->info("This file is executable {$item['file']->getPath()}:");
@@ -629,6 +786,9 @@ class WhichWordpress extends process {
 						$log->reply("Success");
 						break;
 					}
+				}
+				if ($item['action'] == self::HANDCHECK and $item['file']->exists()) {
+					$this->cleanMd5($item['file']->md5());
 				}
 			} elseif ($item['action'] == self::REPAIR) {
 				if ($item['problem'] == 'injectedJS') {
@@ -648,6 +808,26 @@ class WhichWordpress extends process {
 					}
 					$item['file']->rename(substr($item['file']->basename, 0, strlen($item['file']->basename) - 4));
 					*/
+				} elseif ($item['problem'] == 'nasty-js-virues') {
+					$log->info("Repair nasty js virues {$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace("/^Element.prototype.appendAfter =.+\)\)\[0\].appendChild\(elem\);}\)\(\);/", "", $content);
+					$item['file']->write($content);
+				} elseif ($item['problem'] == 'nasty-js-virues-in-php') {
+					$log->info("Repair nasty js virues {$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace("/<script.*>\s*Element.prototype.appendAfter =.+\)\)\[0\].appendChild\(elem\);}\)\(\);<\/script>/", "", $content);
+					$item['file']->write($content);
+				} elseif ($item['problem'] == 'injected-lowerbeforwarden-php') {
+					$log->info("Repair injected lowerbeforwarden scripts{$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace('/^<script .* src=.*lowerbeforwarden.*<\?php/', "<?php", $content);
+					$item['file']->write($content);
+				} elseif ($item['problem'] == 'injected-lowerbeforwarden-html') {
+					$log->info("Repair injected lowerbeforwarden scripts{$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace('/^<script .* src=.*lowerbeforwarden.*/', "", $content);
+					$item['file']->write($content);
 				}
 			}
 		}
@@ -670,5 +850,257 @@ class WhichWordpress extends process {
 			$directory->make(true);
 		}
 		$file->write(json\encode($this->actions, json\PRETTY));
+	}
+
+	private function preparePlugins(Directory $home): void {
+		$log = Log::getInstance();
+		$log->info("get plugins and versions");
+		$pluginsDir = $home->directory("wp-content/plugins");
+		foreach ($pluginsDir->directories(false) as $plugin) {
+			$log->info("plugin: {$plugin->basename}");
+			do {
+				try {
+					$this->preparePlugin($home, $plugin);
+				} catch (PluginException $e) {
+					$question = "";
+					$answers = array(
+						'R' => 'Retry',
+						'S' => 'Skip',
+						'D' => 'Delete'
+					);
+					if ($e->getMessage() == "damaged") {
+						$question = $plugin->getPath() . "\nPlugin \"{$plugin->basename}\" is damaged and there's no info block";
+					} elseif ($e->getMessage() == "notfound") {
+						$question = $plugin->getPath() . "\nPlugin \"{$plugin->basename}\":" . ($e->getInfo()['version'] ?? "undefined") . " is notfound in both jeyserver and wordpress storage";
+					}
+					if ($question) {
+						$response = $this->askQuestion($question, $answers);
+						if ($response == 'D') {
+							$this->addAction(array(
+								'directory' => $plugin->getRealPath(),
+								'action' => self::REMOVE,
+							));
+							$this->plugins[$plugin->basename] = array(
+								'deleted' => true,
+							);
+						} elseif ($response == 'R') {
+							continue;
+						}
+					}
+				}
+				break;
+			} while(true);
+		}
+	}
+
+	private function preparePlugin(Directory $home, Directory $plugin) {
+		$log = Log::getInstance();
+		if ($plugin->isEmpty()) {
+			$log->reply("Empty directory, removing it");
+			$this->addAction(array(
+				'directory' => $plugin->getRealPath(),
+				'action' => self::REMOVE,
+			));
+			return;
+		}
+		$info = $this->getPluginInfo($plugin);
+		if (empty($info)) {
+			$log->reply()->warn("it seems plugin is damaged!");
+			throw new PluginException($plugin, "damaged");
+		}
+		$log->reply("version:", $info['version']);
+
+		$log->info("get original plugin");
+		$key = $plugin->basename . ($info['version'] ? "-" . $info['version'] : "");
+		if (in_array($key, $this->failedPluginDownloads)) {
+			$log->reply()->warn("already tried, failed");
+			return;
+		}
+		try {
+			$original = WordpressScript::downloadPlugin($plugin->basename, ($info['version'] ?? null));
+			if (!$original) {
+				$log->reply()->warn("not found!");
+				throw new PluginException($plugin, "notfound", $info);
+				//$this->failedPluginDownloads[] = $key;
+				//continue;
+			}
+			$this->plugins[$plugin->basename] = array(
+				'name' => $info['name'],
+				'path' => $info['path'] ?? '',
+				'version' => $info['version'] ?? '',
+				'org' => $original,
+			);
+			$log->reply("done");
+
+		} catch (\Exception $e) {
+			$log->reply()->warn("not found!");
+			throw new PluginException($plugin, "notfound", $info);
+			//$this->failedPluginDownloads[] = $key;
+		}
+		foreach ($original->files(true) as $file) {
+			if (!in_array($file->getExtension(), ['php','js'])) {
+				continue;
+			}
+			$relativePath = $this->getRelativePath($original, $file);
+			$local = $plugin->file($relativePath);
+			if (!$local->exists()) {
+				$this->addAction(array(
+					'file' => $local->getPath(),
+					'action' => self::REPLACE,
+					'original' => $file->getRealPath(),
+				));
+			}
+		}
+	}
+	private function prepareThemes(Directory $home): void {
+		$log = Log::getInstance();
+		$log->info("get themes");
+		$themes = $home->directory("wp-content/themes");
+		foreach ($themes->directories(false) as $theme) {
+			$log->info($theme->basename);
+			$this->prepareTheme($home, $theme);
+		}
+	}
+	private function prepareTheme(Directory $home, Directory $theme) {
+		$log = Log::getInstance();
+		try {
+			$original = WordpressScript::downloadTheme($theme->basename);
+			if (!$original) {
+				$log->warn("not found!");
+				return;
+			}
+			$versions = $original->directories(false);
+			if ($versions) {
+				$matches = [];
+				foreach ($versions as $versionDir) {
+					$matches[$versionDir->basename] = $this->checkMatchesOfTheme($theme, $versionDir);
+				}
+				asort($matches);
+				$version = $original->directory(array_keys($matches)[count($matches) - 1]);
+			} else {
+				$version = $original;
+			}
+			$this->themes[$theme->basename] = array(
+				'name' => $theme->basename,
+				'path' => $theme->basename,
+				'org' => $theme,
+				'version' => $version,
+			);
+			$log->info("done, Matched Theme: ", $version->getPath());
+		} catch (\Exception $e) {
+			$log->warn("not found!");
+			return;
+		}
+		foreach ($version->files(true) as $file) {
+			if (!in_array($file->getExtension(), ['php','js'])) {
+				continue;
+			}
+			$relativePath = $this->getRelativePath($version, $file);
+			$local = $theme->file($relativePath);
+			if (!$local->exists()) {
+				$this->addAction(array(
+					'file' => $local->getPath(),
+					'action' => self::REPLACE,
+					'original' => $file->getRealPath(),
+				));
+			}
+		}
+	}
+	private function checkMatchesOfTheme(Directory $theme, Directory $version): int {
+		$matches = 0;
+		foreach ($version->files(true) as $file) {
+			$relativePath = $this->getRelativePath($version, $file);
+			$local = $theme->file($relativePath);
+			if ($local->exists() and $local->md5() == $file->md5()) {
+				$matches++;
+			}
+		}
+		return $matches;
+	}
+
+	private function getRelativePath(Directory $base, File $file): string {
+		return substr($file->getPath(), strlen($base->getPath()) + 1);
+	}
+
+	private function askQuestion(string $question, array $answers): string {
+		do {
+			$helpToAsnwer = "";
+			foreach ($answers as $shortcut => $answer) {
+				if ($helpToAsnwer) {
+					$helpToAsnwer .= ", ";
+				}
+				$helpToAsnwer .= \strtoupper($shortcut) . "=" . $answer;
+			}
+			echo($question." [{$helpToAsnwer}]: ");
+			$response = strtoupper(trim(fgets(STDIN)));
+			$shutcuts = array_map('strtoupper', array_keys($answers));
+			if (in_array($response, $shutcuts)) {
+				return $response;
+			}
+		}while(true);
+	}
+	private function checkFileContent(array $rules, File $file, ?string $content = null): ?array {
+		if ($content === null) {
+			$content = $file->read();
+		}
+
+		$hotcheck = false;
+		$highlights = [];
+		foreach($rules as $rule) {
+			switch ($rule['type']) {
+				case "exact":
+					$valid = stripos($content, $rule['needle']) !== false;
+					break;
+				case "pattern":
+					$valid = preg_match($rule['needle'], $content, $matches) > 0;
+					break;
+				default:
+					$valid = false;
+			}
+			if ($valid) {
+				if ($rule['action'] == 'hotcheck') {
+					$hotcheck = true;
+					if ($rule['type'] == "exact") {
+						$highlights[] = $rule['needle'];
+					} elseif ($rule['type'] == "pattern") {
+						$highlights[] = $matches[0];
+					}
+				} else {
+					$result = array(
+						'status' => self::INFACTED,
+						'action' => $rule['action'],
+					);
+					if ($rule['action'] == self::REPAIR) {
+						$result['problem'] = $rule['problem'];
+					}
+					return $result;
+				}
+			}
+		}
+		$md5 = md5($content);
+		if ($hotcheck and !$this->isCleanMd5($md5)) {
+			while(true) {
+				$response = $this->askQuestion($file->getPath()."\nIs this file is clean?", array(
+					'S' => 'Show Content',
+					'Y' => 'Clean',
+					'N' => 'Infacted',
+				));
+				if ($response == "S") {
+					echo $this->highlight($highlights, $content)."\n";
+				} else if ($response == "Y") {
+					$this->cleanMd5($md5);
+					return array(
+						'status' => self::CLEAN,
+					);
+				} else if ($response == "N") {
+					$this->infactedMd5($md5);
+					return array(
+						'status' => self::INFACTED,
+						'action' => self::REMOVE,
+					);
+				}
+			}
+		}
+		return null;
 	}
 }

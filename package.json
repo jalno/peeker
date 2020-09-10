@@ -1,5 +1,9 @@
 {
-	"permissions": "*",
-	"autoload": "autoloader.json",
+	"autoload": {
+		"directories": [
+			"libraries",
+			"processes"
+		]
+	},
 	"dependencies": ["base"]
 }
