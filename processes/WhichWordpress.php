@@ -168,10 +168,10 @@ class WhichWordpress extends process {
 			if ($ext != "php" and $ext != "js") {
 				if ($isExecutable) {
 					$log->debug($reletivePath, "is executable");
-					$this->addAction(array(
+					/*$this->addAction(array(
 						'file' => $file->getRealPath(),
 						'action' => self::EXECUTABLE,
-					));
+					));*/
 				}
 			}
 			$log->debug("check", $reletivePath);
