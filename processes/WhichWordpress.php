@@ -62,8 +62,8 @@ class WhichWordpress extends process {
 		$this->doActions();
 		foreach($doneUsers as $user) {
 			$log->info("reset permissions:");
-			//shell_exec("find {$user->getPath()}/public_html -type f -exec chmod 0644 {} \;");
-			//shell_exec("find {$user->getPath()}/public_html -type d -exec chmod 0755 {} \;");
+			shell_exec("find {$user->getPath()}/public_html/ -type f -exec chmod 0644 {} \;");
+			shell_exec("find {$user->getPath()}/public_html/ -type d -exec chmod 0755 {} \;");
 			$log->reply("Success");
 		}
 	}
@@ -180,41 +180,33 @@ class WhichWordpress extends process {
 				$log->reply("Clean");
 			} elseif ($result['status'] == self::INFACTED) {
 				$log->reply("Infacted");
+				if (isset($result['reason'])) {
+					$log->append(", Reason: {$result['reason']}");
+				}
 				if ($reletivePath == "wp-config.php" and $result['action'] == self::REMOVE) {
 					$result['action'] = self::HANDCHECK;
 				}
+				foreach ($result as $key => $value) {
+					if ($value instanceof File or $value instanceof Directory) {
+						$result[$key] = $file->getPath();
+					}
+				}
 				if ($result['action'] == self::REPLACE) {
-					$log->append(", Action: Replace with {$result['file']->getPath()}");
-					$this->addAction(array(
-						'file' => $file->getRealPath(),
-						'action' => self::REPLACE,
-						'original' => $result['file']->getRealPath(),
-					));
+					$log->append(", Action: Replace with {$file->getPath()}");
 				} else if ($result['action'] == self::REMOVE) {
 					$log->append(", Action: Remove");
-					$this->addAction(array(
-						'file' => $file->getRealPath(),
-						'action' => self::REMOVE,
-					));
 				} else if ($result['action'] == self::HANDCHECK) {
 					$log->append(", Action: Hand-Check");
 					$isCleanMd5 = $this->isCleanMd5($file->md5());
 					if ($isCleanMd5) {
 						$log->append(", Md5 is clean, Ignore");
-					} else {
-						$this->addAction(array(
-							'file' => $file->getRealPath(),
-							'action' => self::HANDCHECK,
-						));
+						continue;
 					}
 				} else if ($result['action'] == self::REPAIR) {
 					$log->append(", Action: Repair, Problem: {$result['problem']}");
-					$this->addAction(array(
-						'file' => $file->getRealPath(),
-						'action' => self::REPAIR,
-						'problem' => $result['problem']
-					));
 				}
+
+				$this->addAction($result);
 			}
 		}
 	}
@@ -317,6 +309,7 @@ class WhichWordpress extends process {
 				'status' => self::INFACTED,
 				'file' => $homeFile->getRealPath(),
 				'action' => self::REMOVE,
+				'reason' => 'infacted-ico-file'
 			);
 		}
 		if ($ext == "suspected") {
@@ -324,6 +317,7 @@ class WhichWordpress extends process {
 				'status' => self::INFACTED,
 				'file' => $homeFile->getRealPath(),
 				'action' => self::REMOVE,
+				'reason' => 'suspected-file'
 			);
 		}
 		if ($homeFile->basename == "log.txt" or $homeFile->basename == "log.zip") {
@@ -331,6 +325,7 @@ class WhichWordpress extends process {
 				'status' => self::INFACTED,
 				'file' => $homeFile->getRealPath(),
 				'action' => self::REMOVE,
+				'reason' => 'bad-name'
 			);
 		}
 
@@ -370,16 +365,29 @@ class WhichWordpress extends process {
 			'status' => self::INFACTED,
 			'action' => self::REPLACE,
 			'file' => $original,
+			'reason' => 'replace-wordpress-file'
 		);
 	}
 	public function isCleanPHPFile(File $file, Directory $home): ?array {
 		$log = Log::getInstance();
 		$badNames = ["adminer.php", "wp.php", "wpconfig.bak.php", "wp-build-report.php", "wp-stream.php"];
+		$badNamesPatterns = ["/_index\.php$/"];
 		if (in_array($file->basename, $badNames)) {
 			return array(
 				'status' => self::INFACTED,
 				'action' => self::REMOVE,
+				'reason' => 'bad-name-php'
 			);
+		}
+		foreach ($badNamesPatterns as $badName) {
+			if (preg_match($badName, $file->basename)) {
+				return array(
+					'status' => self::INFACTED,
+					'action' => self::REMOVE,
+					'reason' => 'bad-name-php',
+					'pattern' => $badName,
+				);
+			}
 		}
 
 		$relativePath = $this->getRelativePath($home, $file);
@@ -402,6 +410,7 @@ class WhichWordpress extends process {
 					return array(
 						'status' => self::INFACTED,
 						'action' => self::REMOVE,
+						'reason' => 'php-file-in-wrong-dir'
 					);
 				}
 			}
@@ -639,12 +648,14 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::HANDCHECK,
+				'reason' => 'non-exist-theme-file'
 			);
 		}
 		if ($original->md5() != $file->md5()) {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::HANDCHECK,
+				'reason' => 'changed-theme-file'
 			);
 		}
 		return null;
@@ -658,6 +669,7 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REMOVE,
+				"reason" => "deleted-plugin"
 			);
 		}
 		$relativePath = $this->getRelativePath($home->directory("wp-content/plugins/{$plugin}"), $file);
@@ -666,13 +678,15 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REMOVE,
+				"reason" => "non-exist-in-plugin"
 			);
 		}
 		if ($original->md5() != $file->md5()) {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REPLACE,
-				"file" => $original,
+				"file" => $original,,
+				'reason' => 'changed-plugin-file'
 			);
 		}
 		return array(
@@ -695,12 +709,14 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::HANDCHECK,
+				'reason' => 'non-exist-theme-file'
 			);
 		}
 		if ($original->md5() != $file->md5()) {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::HANDCHECK,
+				'reason' => 'changed-theme-file'
 			);
 		}
 		return null;
@@ -714,6 +730,7 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REMOVE,
+				"reason" => "deleted-plugin"
 			);
 		}
 		$relativePath = $this->getRelativePath($home->directory("wp-content/plugins/{$plugin}"), $file);
@@ -722,6 +739,7 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REMOVE,
+				"reason" => "non-exist-in-plugin"
 			);
 		}
 		if ($original->md5() != $file->md5()) {
@@ -729,6 +747,7 @@ class WhichWordpress extends process {
 				"status" => self::INFACTED,
 				"action" => self::REPLACE,
 				"file" => $original,
+				'reason' => 'changed-plugin-file'
 			);
 		}
 		return array(
@@ -900,6 +919,7 @@ class WhichWordpress extends process {
 			$this->addAction(array(
 				'directory' => $plugin->getRealPath(),
 				'action' => self::REMOVE,
+				"reason" => "empty-plugin"
 			));
 			return;
 		}
@@ -1069,6 +1089,8 @@ class WhichWordpress extends process {
 					$result = array(
 						'status' => self::INFACTED,
 						'action' => $rule['action'],
+						'reason' => $rule['reason'] ?? 'check-content',
+						'needle' => $rule['needle'],
 					);
 					if ($rule['action'] == self::REPAIR) {
 						$result['problem'] = $rule['problem'];
@@ -1097,6 +1119,7 @@ class WhichWordpress extends process {
 					return array(
 						'status' => self::INFACTED,
 						'action' => self::REMOVE,
+						"reason" => "manual-hotcheck"
 					);
 				}
 			}
