@@ -159,6 +159,7 @@ class WhichWordpress extends process {
 		$this->prepareThemes($home);
 		
 
+		$hasInfacted = false;
 		$log->info("try check each file");
 		$files = $home->files(true);
 		foreach($files as $file) {
@@ -210,6 +211,19 @@ class WhichWordpress extends process {
 				}
 
 				$this->addAction($result);
+				$hasInfacted = true;
+			}
+		}
+		if ($hasInfacted) {
+			$wpRocket = $home->directory("wp-content/cache/wp-rocket");
+			if ($wpRocket->exists()) {
+				foreach ($wpRocket->directories(false) as $item) {
+					$this->addAction(array(
+						'action' => self::REMOVE,
+						'directory' => $item->getPath(),
+						'reason' => 'clear-wp-rocket-cache',
+					));
+				}
 			}
 		}
 	}
