@@ -685,7 +685,7 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REPLACE,
-				"file" => $original,,
+				"file" => $original,
 				'reason' => 'changed-plugin-file'
 			);
 		}
