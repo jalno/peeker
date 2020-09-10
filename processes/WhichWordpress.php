@@ -183,6 +183,9 @@ class WhichWordpress extends process {
 				if (isset($result['reason'])) {
 					$log->append(", Reason: {$result['reason']}");
 				}
+				if (!isset($result['file'])) {
+					$result['file'] = $file;
+				}
 				if ($reletivePath == "wp-config.php" and $result['action'] == self::REMOVE) {
 					$result['action'] = self::HANDCHECK;
 				}
@@ -192,7 +195,7 @@ class WhichWordpress extends process {
 					}
 				}
 				if ($result['action'] == self::REPLACE) {
-					$log->append(", Action: Replace with {$file->getPath()}");
+					$log->append(", Action: Replace with {$result['original']}");
 				} else if ($result['action'] == self::REMOVE) {
 					$log->append(", Action: Remove");
 				} else if ($result['action'] == self::HANDCHECK) {
@@ -364,7 +367,7 @@ class WhichWordpress extends process {
 		return array(
 			'status' => self::INFACTED,
 			'action' => self::REPLACE,
-			'file' => $original,
+			'original' => $original,
 			'reason' => 'replace-wordpress-file'
 		);
 	}
@@ -522,6 +525,18 @@ class WhichWordpress extends process {
 			),
 			array(
 				'type' => 'pattern',
+				'needle' => '/^<\?php\s{200,}.+eval.+\?><\?php/i',
+				'action' => self::REPAIR,
+				'problem' => 'injected-php-in-first-line'
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/^<\?php.+md5.+\?><\?php/i',
+				'action' => self::REPAIR,
+				'problem' => 'injected-php-in-first-line-md5'
+			),
+			array(
+				'type' => 'pattern',
 				'needle' => '/<script.+ src=[\"\'].+lowerbeforwarden.+[\"\'].*><\/script>/i',
 				'action' => self::HANDCHECK
 			),
@@ -568,7 +583,7 @@ class WhichWordpress extends process {
 			),
 			array(
 				'type' => 'pattern',
-				'needle' => '/\Weval\s*\(/',
+				'needle' => '/\Weval\s*[\[\]\~\!\\\'\"\@\#\$%\^\&\*\(\)\-_+=:\{\}\<\>\/\\\\]/',
 				'action' => 'hotcheck'
 			),
 		);
@@ -685,7 +700,7 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REPLACE,
-				"file" => $original,
+				"original" => $original,
 				'reason' => 'changed-plugin-file'
 			);
 		}
@@ -746,7 +761,7 @@ class WhichWordpress extends process {
 			return array(
 				"status" => self::INFACTED,
 				"action" => self::REPLACE,
-				"file" => $original,
+				"original" => $original,
 				'reason' => 'changed-plugin-file'
 			);
 		}
@@ -783,7 +798,7 @@ class WhichWordpress extends process {
 				$item['original']->copyTo($item['file']);
 				$log->reply("Success");
 			} elseif ($item['action'] == self::REMOVE) {
-				$target = $item['file'] ?? $item['directory'];
+				$target = isset($item['directory']) ? $item['directory'] : $item['file'];
 				$log->info("Remove {$target->getPath()}");
 				if ($target->exists()) {
 					$target->delete(true);
@@ -798,14 +813,27 @@ class WhichWordpress extends process {
 				} else {
 					$log->info("Hand-check {$item['file']->getPath()}");
 				}
-				while(true) {
-					echo("Please check {$item['file']->getRealPath()} and type OK:");
-					$response = strtolower(trim(fgets(STDIN)));
-					if ($response == "ok") {
+				do {
+					$response = $response = $this->askQuestion("Please check {$item['file']->getRealPath()}", array(
+						"OK" => "OK",
+						"R" => "Remove",
+						"S" => "Show"
+					));
+					if ($response == "OK") {
 						$log->reply("Success");
 						break;
 					}
-				}
+					if ($response == "R") {
+						$log->reply("Manual Remove");
+						if ($item['file']->exists()) {
+							$item['file']->delete();
+						}
+						break;
+					}
+					if ($response == "S") {
+						echo $item['file']->read();
+					}
+				} while(true);
 				if ($item['action'] == self::HANDCHECK and $item['file']->exists()) {
 					$this->cleanMd5($item['file']->md5());
 				}
@@ -846,6 +874,16 @@ class WhichWordpress extends process {
 					$log->info("Repair injected lowerbeforwarden scripts{$item['file']->getPath()}");
 					$content = $item['file']->read();
 					$content = preg_replace('/^<script .* src=.*lowerbeforwarden.*/', "", $content);
+					$item['file']->write($content);
+				} elseif ($item['problem'] == 'injected-php-in-first-line') {
+					$log->info("Repair injected php in first line {$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace('/^<\?php\s{200,}.+eval.+\?><\?php/i', '<?php', $content);
+					$item['file']->write($content);
+				} elseif ($item['problem'] == 'injected-php-in-first-line-md5') {
+					$log->info("Repair injected php in first line (MD5) {$item['file']->getPath()}");
+					$content = $item['file']->read();
+					$content = preg_replace('/^<\?php.+md5.+\?><\?php/i', '<?php', $content);
 					$item['file']->write($content);
 				}
 			}
@@ -896,7 +934,7 @@ class WhichWordpress extends process {
 						$response = $this->askQuestion($question, $answers);
 						if ($response == 'D') {
 							$this->addAction(array(
-								'directory' => $plugin->getRealPath(),
+								'directory' => $plugin->getPath(),
 								'action' => self::REMOVE,
 							));
 							$this->plugins[$plugin->basename] = array(
@@ -1049,7 +1087,8 @@ class WhichWordpress extends process {
 				if ($helpToAsnwer) {
 					$helpToAsnwer .= ", ";
 				}
-				$helpToAsnwer .= \strtoupper($shortcut) . "=" . $answer;
+				$shutcut = strtoupper($shortcut);
+				$helpToAsnwer .= ($answer != $shutcut ? $shortcut . " = " : "") . $answer;
 			}
 			echo($question." [{$helpToAsnwer}]: ");
 			$response = strtoupper(trim(fgets(STDIN)));
