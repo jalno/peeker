@@ -191,7 +191,7 @@ class WhichWordpress extends process {
 				}
 				foreach ($result as $key => $value) {
 					if ($value instanceof File or $value instanceof Directory) {
-						$result[$key] = $file->getPath();
+						$result[$key] = $value->getPath();
 					}
 				}
 				if ($result['action'] == self::REPLACE) {
@@ -513,13 +513,13 @@ class WhichWordpress extends process {
 			),
 			array(
 				'type' => 'pattern',
-				'needle' => '/^<script .* src=.*lowerbeforwarden.*<\?php/i',
+				'needle' => '/^<script .+<\?php/i',
 				'action' => self::REPAIR,
 				'problem' => 'injected-lowerbeforwarden-php'
 			),
 			array(
 				'type' => 'pattern',
-				'needle' => '/^<script .* src=.*lowerbeforwarden.*/i',
+				'needle' => '/^<script .* src=.*temp\.js.*/i',
 				'action' => self::REPAIR,
 				'problem' => 'injected-lowerbeforwarden-html'
 			),
@@ -866,14 +866,14 @@ class WhichWordpress extends process {
 					$content = preg_replace("/<script.*>\s*Element.prototype.appendAfter =.+\)\)\[0\].appendChild\(elem\);}\)\(\);<\/script>/", "", $content);
 					$item['file']->write($content);
 				} elseif ($item['problem'] == 'injected-lowerbeforwarden-php') {
-					$log->info("Repair injected lowerbeforwarden scripts{$item['file']->getPath()}");
+					$log->info("Repair injected lowerbeforwarden scripts {$item['file']->getPath()}");
 					$content = $item['file']->read();
-					$content = preg_replace('/^<script .* src=.*lowerbeforwarden.*<\?php/', "<?php", $content);
+					$content = preg_replace('/^<script .* src=.*<\?php/', "<?php", $content);
 					$item['file']->write($content);
 				} elseif ($item['problem'] == 'injected-lowerbeforwarden-html') {
 					$log->info("Repair injected lowerbeforwarden scripts{$item['file']->getPath()}");
 					$content = $item['file']->read();
-					$content = preg_replace('/^<script .* src=.*lowerbeforwarden.*/', "", $content);
+					$content = preg_replace('/^<script .* src=.*temp\.js.*/', "", $content);
 					$item['file']->write($content);
 				} elseif ($item['problem'] == 'injected-php-in-first-line') {
 					$log->info("Repair injected php in first line {$item['file']->getPath()}");
