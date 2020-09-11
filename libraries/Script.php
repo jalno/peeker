@@ -29,4 +29,13 @@ class Script {
 	public function setHome(directory $home) {
 		$this->home = $home;
 	}
+
+	/**
+	 * Specify data which should be serialized to JSON
+	 * 
+	 * @return string
+	 */
+	public function jsonSerialize() {
+		return $this->home->getPath();
+	}
 }

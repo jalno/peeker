@@ -175,9 +175,7 @@ class WordpressScript extends Script {
 		parent::__construct($config->getDirectory());
 		$this->config = $config;
 	}
-	/**
-	 * @return array
-	 */
+
 	public function getDatabaseInfo() {
 		if (!$this->dbInfo) {
 			$log = log::getInstance();
@@ -186,7 +184,7 @@ class WordpressScript extends Script {
 			$dbInfo = [];
 			foreach(['DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST'] as $const) {
 				$log->debug("looking for", $const);
-				if (preg_match("/define\([\'|\"]{$const}[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\);/", $content, $matches)) {
+				if (preg_match("/define\(\s*[\'|\"]{$const}[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\s*\);/", $content, $matches)) {
 					$log->reply($matches[1]);
 					switch($const){
 						case('DB_NAME'):$dbInfo['database'] = $matches[1];break;
@@ -207,9 +205,29 @@ class WordpressScript extends Script {
 				$log->reply()->fatal('Notfound');
 				throw new Exception("cannot find \$table_prefix in wp-config.php");
 			}
+			$log->debug("looking for WPLANG");
+			if (preg_match("/define\(\s*[\'|\"]WPLANG[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\);/", $content, $matches)) {
+				$log->reply($matches[1]);
+				$this->locale = $matches[1];
+			} else {
+				$log->reply('Notfound');
+			}
+			$log->debug("looking for DB_CHARSET");
+			if (preg_match("/define\(\s*[\'|\"]DB_CHARSET[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\);/", $content, $matches)) {
+				$log->reply($matches[1]);
+				$dbInfo['charset'] = $matches[1];
+			} else {
+				$log->reply('Notfound');
+			}
+			$this->dbInfo = $dbInfo;
 		}
-		return $dbInfo;
+		return $this->dbInfo;
 	}
+
+	public function setDB(MysqliDb $db) {
+		$this->db = $db;
+	}
+
 	/**
 	 * @return MysqliDb
 	 */
@@ -234,11 +252,30 @@ class WordpressScript extends Script {
 			throw new Exception($e->getMessage());
 		}
 	}
+	public function setOption(string $name, $value) {
+		return $this->requireDB()->replace("options", array(
+			"option_name" => $name,
+			'option_value' => $value,
+			'autoload' => 'yes'
+		));
+	}
 	public function getWPVersion() {
 		$version = $this->home->file("wp-includes/version.php");
 		if (preg_match("/\\\$wp_version\s*=\s*[\'|\"]([^\'|^\"]+)[\'|\"];/", $version->read(), $matches)) {
 			return $matches[1];
 		}
+	}
+	public function getLocale(): string {
+		if (!$this->locale) {	
+			$this->getDatabaseInfo();
+			if (!$this->locale) {
+				$this->locale = $this->getOption('WPLANG');
+			}
+			if (!$this->locale) {
+				$this->locale = 'en_US';
+			}
+		}
+		return $this->locale;
 	}
 
 	/**
@@ -263,5 +300,14 @@ class WordpressScript extends Script {
 		$this->config = $config;
 
 		return $this;
+	}
+
+	/**
+	 * Specify data which should be serialized to JSON
+	 * 
+	 * @return string
+	 */
+	public function jsonSerialize() {
+		return $this->config->getPath();
 	}
 }

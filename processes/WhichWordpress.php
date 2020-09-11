@@ -226,6 +226,18 @@ class WhichWordpress extends process {
 				}
 			}
 		}
+		$sql = $wp->requireDB();
+		$posts = array_column($sql->where("post_content", "<script", "contains")->get("posts", null, ['ID']), 'ID');
+		if ($posts) {
+			foreach ($posts as $post) {
+				$this->addAction(array(
+					'action' => self::REPAIR,
+					'problem' => "fix-script-in-post-content",
+					'post' => $post,
+					'wp' => $wp,
+				));	
+			}
+		}
 	}
 	protected function getPluginInfo(Directory $pluginDir): array {
 		$response = array();
@@ -803,6 +815,9 @@ class WhichWordpress extends process {
 		foreach($this->actions as $item) {
 			$item['file'] = isset($item['file']) ? new file($item['file']) : null;
 			$item['directory'] = isset($item['directory']) ? new Directory($item['directory']) : null;
+			if (isset($item['wp']) and is_string($item['wp'])) {
+				$item['wp'] = new WordpressScript(new File($item['wp']));
+			}
 			if ($item['action'] == self::REPLACE) {
 				$item['original'] = new file($item['original']);
 				$log->info("Copy {$item['original']->getPath()} to {$item['file']->getPath()}");
@@ -899,6 +914,13 @@ class WhichWordpress extends process {
 					$content = $item['file']->read();
 					$content = preg_replace('/^<\?php.+md5.+\?><\?php/i', '<?php', $content);
 					$item['file']->write($content);
+				} elseif ($item['problem'] == 'fix-script-in-post-content') {
+					$log->info("Repair injected script tag in post content #{$item['post']}");
+					$sql = $item['wp']->requireDB();
+					$sql->where("ID", $item['post'])
+						->update("posts", array(
+							"post_content" => $sql->func('REGEXP_REPLACE(`post_content`, "<script.+</script>", "")')
+						));
 				}
 			}
 		}
