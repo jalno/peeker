@@ -214,6 +214,29 @@ class WhichWordpress extends process {
 				$hasInfacted = true;
 			}
 		}
+		$sql = $wp->requireDB();
+		$posts = array_column($sql->where("post_content", "<script", "contains")->get("posts", null, ['ID']), 'ID');
+		if ($posts) {
+			$hasInfacted = true;
+			foreach ($posts as $post) {
+				$this->addAction(array(
+					'action' => self::REPAIR,
+					'problem' => "fix-script-in-post-content",
+					'post' => $post,
+					'wp' => $wp,
+				));
+			}
+		}
+		foreach ([$wp->getOption("siteurl"), $wp->getOption("home")] as $item) {
+			if (strpos($item, "?") !== false || strpos($item, "&") !== false) {
+				$hasInfacted = true;
+				$this->addAction(array(
+					'action' => self::REPAIR,
+					'problem' => "fix-siteurl",
+					'wp' => $wp,
+				));
+			}
+		}
 		if ($hasInfacted) {
 			$wpRocket = $home->directory("wp-content/cache/wp-rocket");
 			if ($wpRocket->exists()) {
@@ -224,18 +247,6 @@ class WhichWordpress extends process {
 						'reason' => 'clear-wp-rocket-cache',
 					));
 				}
-			}
-		}
-		$sql = $wp->requireDB();
-		$posts = array_column($sql->where("post_content", "<script", "contains")->get("posts", null, ['ID']), 'ID');
-		if ($posts) {
-			foreach ($posts as $post) {
-				$this->addAction(array(
-					'action' => self::REPAIR,
-					'problem' => "fix-script-in-post-content",
-					'post' => $post,
-					'wp' => $wp,
-				));	
 			}
 		}
 	}
@@ -593,6 +604,16 @@ class WhichWordpress extends process {
 				'action' => self::HANDCHECK
 			),
 			array(
+				'type' => 'exact',
+				'needle' => "function updatefile(\$blacks='')",
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'exact',
+				'needle' => "daksldlkdsadas",
+				'action' => self::HANDCHECK
+			),
+			array(
 				'type' => 'pattern',
 				'needle' => "/^\<\?php .{200,}/",
 				'action' => self::HANDCHECK
@@ -921,6 +942,12 @@ class WhichWordpress extends process {
 						->update("posts", array(
 							"post_content" => $sql->func('REGEXP_REPLACE(`post_content`, "<script.+</script>", "")')
 						));
+				} elseif ($item['problem'] == 'fix-siteurl') {
+					$log->info("Repair changed site url");
+					$siteurl = $this->askQuestion("In seems the site url have been changed, please provide a correct one");
+					$siteurl = rtrim($siteurl, "/") . "/";
+					$item['wp']->setOption("siteurl", $siteurl);
+					$item['wp']->setOption("home", $siteurl);
 				}
 			}
 		}
@@ -1116,20 +1143,27 @@ class WhichWordpress extends process {
 		return substr($file->getPath(), strlen($base->getPath()) + 1);
 	}
 
-	private function askQuestion(string $question, array $answers): string {
+	private function askQuestion(string $question, ?array $answers = null): string {
 		do {
 			$helpToAsnwer = "";
-			foreach ($answers as $shortcut => $answer) {
-				if ($helpToAsnwer) {
-					$helpToAsnwer .= ", ";
+			if ($answers) {
+				foreach ($answers as $shortcut => $answer) {
+					if ($helpToAsnwer) {
+						$helpToAsnwer .= ", ";
+					}
+					$shutcut = strtoupper($shortcut);
+					$helpToAsnwer .= ($answer != $shutcut ? $shortcut . " = " : "") . $answer;
 				}
-				$shutcut = strtoupper($shortcut);
-				$helpToAsnwer .= ($answer != $shutcut ? $shortcut . " = " : "") . $answer;
 			}
-			echo($question." [{$helpToAsnwer}]: ");
-			$response = strtoupper(trim(fgets(STDIN)));
-			$shutcuts = array_map('strtoupper', array_keys($answers));
-			if (in_array($response, $shutcuts)) {
+			echo($question . ($helpToAsnwer ? " [{$helpToAsnwer}]" : "") . ": ");
+			$response = trim(fgets(STDIN));
+			if ($answers) {
+				$response = strtoupper($response);
+				$shutcuts = array_map('strtoupper', array_keys($answers));
+				if (in_array($response, $shutcuts)) {
+					return $response;
+				}
+			} elseif ($response) {
 				return $response;
 			}
 		}while(true);
