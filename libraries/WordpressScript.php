@@ -26,6 +26,8 @@ class WordpressScript extends Script {
 		return $src;
 	}
 	public static function downloadTheme(string $name): ?Directory {
+		$log = Log::getInstance();
+		$log->info("try find or download theme: {$name}");
 		$repo = Packages::package("peeker")->getHome()->directory("storage/private/themes");
 		if (!$repo->exists()) {
 			$repo->make(true);
@@ -36,6 +38,7 @@ class WordpressScript extends Script {
 		} else {
 			$src->make();
 		}
+		$log->info("downloading theme");
 		$http = new Client(array(
 			"base_uri" => "http://peeker.jeyserver.com/",
 		));
@@ -45,6 +48,7 @@ class WordpressScript extends Script {
 				"save_as" => $zipFile
 			));
 		} catch (\Exception $e) {
+			$log->reply()->warn("failed!");
 			return null;
 		}
 		$zip = new \ZipArchive();
@@ -56,6 +60,104 @@ class WordpressScript extends Script {
 		$zip->close();
 
 		return $src;
+	}
+	public static function downloadPlugin(string $pluginName, string $version = null, bool $fallback = true): ?Directory {
+		$log = Log::getInstance();
+		$name = $pluginName;
+		if (substr($name, -strlen("-master")) == "-master") {
+			$name = substr($name, 0, -strlen("-master"));
+		}
+		$log->info("try find or download plugin: {$name}, version:", $version, ", fallback:", ($fallback ? "yes" : "no"));
+		$repo = Packages::package("peeker")->getHome()->directory("storage/private/plugins");
+		if (!$repo->exists()) {
+			$repo->make(true);
+		}
+		$src = $repo->directory($name);
+		if (!$src->exists()) {
+			$src->make();
+		}
+		$latest = $src->directory("latest");
+		$requestedVersionSrc = ($version ? $src->directory($version) : null);
+		if ($requestedVersionSrc) {
+			if ($requestedVersionSrc->exists()) {
+				if (!$requestedVersionSrc->isEmpty()) {
+					return $requestedVersionSrc;
+				}
+				if (!$fallback) {
+					return null;
+				}
+			} else {
+				$requestedVersionSrc->make();
+			}
+		}
+		if (!$requestedVersionSrc) {
+			if ($latest->exists()) {
+				return !$latest->isEmpty() ? $latest : null;
+			} else {
+				$latest->make();
+			}
+		}
+
+		$zipFile = new IO\file\Tmp();
+		$fileName = ($version ? "{$name}.{$version}" : $name);
+		$log->info("download file: {$fileName}");
+		$log->info("start with peeker.jeyserver.com mirror");
+		try {
+			$response = (new Client(array(
+				"base_uri" => "http://peeker.jeyserver.com/",
+			)))->get("plugins/{$fileName}.zip", array(
+				"save_as" => $zipFile,
+			));
+			if ($response->getStatusCode() != 200) {
+				throw new \Exception("http_status_code");
+			}
+			$log->reply("done");
+		} catch (\Exception $e) {
+			$log->reply()->warn("failed!", $e->getMessage());
+			$log->info("switch to downloads.wordpress.org");
+			try {
+				$response = (new Client(array(
+					"base_uri" => "https://downloads.wordpress.org/",
+				)))->get("plugin/{$fileName}.zip", array(
+					"save_as" => $zipFile,
+				));
+				if ($response->getStatusCode() != 200) {
+					throw new \Exception("http_status_code");
+				}
+				$log->reply("done");
+			} catch (\Exception $e) {
+				$log->reply()->warn("failed!", $e->getMessage());
+				if ($requestedVersionSrc) {
+					$requestedVersionSrc->delete(true);
+				} else {
+					$latest->delete(true);
+				}
+				if (!$src->files(true)) {
+					$src->delete(true);
+				}
+				if ($requestedVersionSrc and $fallback) {
+					$log->warn("try to fallback to find latest version");
+					return self::downloadPlugin($name, null, false);
+				}
+				return null;
+			}
+		}
+		$zip = new \ZipArchive();
+		$open = $zip->open($zipFile->getPath());
+		if ($open !== true) {
+			throw new \Exception("Cannot open zip file: " . $open);
+		}
+		$resultDirectory = ($requestedVersionSrc ? $requestedVersionSrc : $latest);
+		$zip->extractTo($resultDirectory->getPath());
+		$zip->close();
+
+		$sameNameDirectory = $resultDirectory->directory($pluginName);
+		if ($sameNameDirectory->exists()) {
+			$sameNameDirectory->move($resultDirectory->getDirectory());
+			$resultDirectory->getDirectory()->directory($pluginName)->rename($resultDirectory->basename);
+		}
+
+		return $resultDirectory;
 	}
 	/**
 	 * @var file
@@ -73,9 +175,7 @@ class WordpressScript extends Script {
 		parent::__construct($config->getDirectory());
 		$this->config = $config;
 	}
-	/**
-	 * @return array
-	 */
+
 	public function getDatabaseInfo() {
 		if (!$this->dbInfo) {
 			$log = log::getInstance();
@@ -84,7 +184,7 @@ class WordpressScript extends Script {
 			$dbInfo = [];
 			foreach(['DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_HOST'] as $const) {
 				$log->debug("looking for", $const);
-				if (preg_match("/define\([\'|\"]{$const}[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\);/", $content, $matches)) {
+				if (preg_match("/define\(\s*[\'|\"]{$const}[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\s*\);/", $content, $matches)) {
 					$log->reply($matches[1]);
 					switch($const){
 						case('DB_NAME'):$dbInfo['database'] = $matches[1];break;
@@ -105,9 +205,29 @@ class WordpressScript extends Script {
 				$log->reply()->fatal('Notfound');
 				throw new Exception("cannot find \$table_prefix in wp-config.php");
 			}
+			$log->debug("looking for WPLANG");
+			if (preg_match("/define\(\s*[\'|\"]WPLANG[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\);/", $content, $matches)) {
+				$log->reply($matches[1]);
+				$this->locale = $matches[1];
+			} else {
+				$log->reply('Notfound');
+			}
+			$log->debug("looking for DB_CHARSET");
+			if (preg_match("/define\(\s*[\'|\"]DB_CHARSET[\'|\"],\s*[\'|\"]([^\"|^\']+)[\'|\"]\);/", $content, $matches)) {
+				$log->reply($matches[1]);
+				$dbInfo['charset'] = $matches[1];
+			} else {
+				$log->reply('Notfound');
+			}
+			$this->dbInfo = $dbInfo;
 		}
-		return $dbInfo;
+		return $this->dbInfo;
 	}
+
+	public function setDB(MysqliDb $db) {
+		$this->db = $db;
+	}
+
 	/**
 	 * @return MysqliDb
 	 */
@@ -132,11 +252,30 @@ class WordpressScript extends Script {
 			throw new Exception($e->getMessage());
 		}
 	}
+	public function setOption(string $name, $value) {
+		return $this->requireDB()->replace("options", array(
+			"option_name" => $name,
+			'option_value' => $value,
+			'autoload' => 'yes'
+		));
+	}
 	public function getWPVersion() {
 		$version = $this->home->file("wp-includes/version.php");
 		if (preg_match("/\\\$wp_version\s*=\s*[\'|\"]([^\'|^\"]+)[\'|\"];/", $version->read(), $matches)) {
 			return $matches[1];
 		}
+	}
+	public function getLocale(): string {
+		if (!$this->locale) {	
+			$this->getDatabaseInfo();
+			if (!$this->locale) {
+				$this->locale = $this->getOption('WPLANG');
+			}
+			if (!$this->locale) {
+				$this->locale = 'en_US';
+			}
+		}
+		return $this->locale;
 	}
 
 	/**
@@ -161,5 +300,14 @@ class WordpressScript extends Script {
 		$this->config = $config;
 
 		return $this;
+	}
+
+	/**
+	 * Specify data which should be serialized to JSON
+	 * 
+	 * @return string
+	 */
+	public function jsonSerialize() {
+		return $this->config->getPath();
 	}
 }
