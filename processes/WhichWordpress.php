@@ -235,6 +235,7 @@ class WhichWordpress extends process {
 					'problem' => "fix-siteurl",
 					'wp' => $wp,
 				));
+				break;
 			}
 		}
 		if ($hasInfacted) {
@@ -621,6 +622,11 @@ class WhichWordpress extends process {
 			array(
 				'type' => 'pattern',
 				'needle' => "/var .{1000,},_0x[a-z0-9]+\\)\\}\\(\\)\\);/",
+				'action' => self::HANDCHECK
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/\$\w+\s*=.+array\(\);.+exit\(\);.+}$/i',
 				'action' => self::HANDCHECK
 			),
 			array(
