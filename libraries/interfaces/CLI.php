@@ -34,6 +34,18 @@ class CLI implements IInterface {
 	}
 
 	public function showFile(File $file): void {
-		system('nano --linenumbers --softwrap ' . $file->getPath() . ' > `tty`');
+		$nanoFile = $file;
+		if (!$file instanceof File\Local) {
+			$nanoFile = new File\Tmp();
+			$file->copyTo($nanoFile); 
+		}
+		$initMd5 = $nanoFile->md5();
+		$help = system("nano --help");
+		$shupportLineNumber = strpos($help, "--linenumbers") !== false;
+
+		system('nano ' . ($shupportLineNumber ? '--linenumbers ' : '') . '--softwrap ' . $nanoFile->getPath() . ' > `tty`');
+		if ($nanoFile !== $file and $nanoFile->md5() != $initMd5) {
+			$nanoFile->copyTo($file);
+		}
 	}
 }
