@@ -156,7 +156,7 @@ class WordpressScript extends Script {
 				return array(
 					'host' => $this->home->getDriver()->getSSH()->getHost(),
 					'username' => $matches[1],
-					'password' => $matches[1],
+					'password' => $matches[2],
 				);
 			}
 		}
