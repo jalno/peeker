@@ -5,6 +5,20 @@ use packages\base\{Log, IO\File, IO\Directory, Packages, http\Client};
 use packages\peeker\{IAction, Scanner, FileScannerTrait, ActionConflictException, actions};
 
 class ThemeScanner extends Scanner {
+	public static function isOriginalTheme(string $theme): bool {
+		return in_array($theme, array(
+			'twentytwenty',
+			'twentynineteen',
+			'twentyseventeen',
+			'twentysixteen',
+			'twentyfifteen',
+			'twentyfourteen',
+			'twentythirteen',
+			'twentytwelve',
+			'twentyeleven',
+			'twentyten'
+		));
+	}
 	use FileScannerTrait;
 
 	protected $themes = [];
@@ -58,16 +72,25 @@ class ThemeScanner extends Scanner {
 	}
 
 	protected function checkFile(array $theme, File $file): ?IAction {
+		$isOriginalTheme = self::isOriginalTheme($theme['directory']->basename);
 		$path = $theme['directory']->getRelativePath($file);
 		if (in_array($path, ['header.php', 'single.php'])) {
 			return null;
 		}
 		$original = $theme['original']->file($path);
 		if (!$original->exists()) {
+			if ($isOriginalTheme) {
+				return (new actions\RemoveFile($file))
+					->setReason('non-exist-original-theme-file');
+			}
 			return (new actions\HandCheckFile($file))
 				->setReason('non-exist-theme-file');
 		}
 		if ($original->md5() != $file->md5()) {
+			if ($isOriginalTheme) {
+				return (new actions\ReplaceFile($file, $original))
+					->setReason('changed-original-theme-file');
+			}
 			return (new actions\HandCheckFile($file))
 				->setReason('changed-theme-file')
 				->setOriginalFile($original);

@@ -124,6 +124,10 @@ class WordpressScanner extends Scanner {
 		}
 
 		$path = $this->home->getRelativePath($file);
+
+		if (preg_match("/^wp-content\/themes\/([^\/]+)/", $path, $matches) and ThemeScanner::isOriginalTheme($matches[1])) {
+			return null;
+		}
 		$original = $this->originalWP->file($path);
 		if (!$original->exists()) {
 			if (preg_match("/^wp-snapshots\//", $path)) {
