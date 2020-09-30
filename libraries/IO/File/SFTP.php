@@ -54,9 +54,9 @@ class SFTP extends BaseSFTP implements IPreloadedMd5 {
 	public function delete(): void {
 		parent::delete();
 		if ($this->parent and $this->parent->isPreloadItems()) {
-			for ($x = 0, $l = count($this->parent->preloadItems); $x < $l; $x++) {
-				if ($this->parent->preloadItems[$x] == $this) {
-					array_splice($this->parent->preloadItems, $x, 1);
+			for ($x = 0, $l = count($this->parent->preloadedItems); $x < $l; $x++) {
+				if ($this->parent->preloadedItems[$x] == $this) {
+					array_splice($this->parent->preloadedItems, $x, 1);
 					break;
 				}
 			}

@@ -6,7 +6,7 @@ use packages\peeker\IO\{IPreloadedMd5, File};
 
 class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedMd5 {
 	public $parent;
-	protected $preloadedItems;
+	public $preloadedItems;
 	protected $preloadedMd5 = false;
 
 	public function isPreloadItems(): bool {
@@ -256,8 +256,14 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 
     public function delete(): void {
 		parent::delete();
+		if ($this->isPreloadItems()) {
+			for ($x = 0, $l = count($this->preloadedItems); $x < $l; $x++) {
+				$this->preloadedItems[$x]->parent = null;
+			}
+			$this->preloadedItems = null;
+		}
 		if ($this->parent and $this->parent->isPreloadItems()) {
-			for ($x = 0, $l = count($this->parent->preloadItems); $x < $l; $x++) {
+			for ($x = 0, $l = count($this->parent->preloadedItems); $x < $l; $x++) {
 				if ($this->parent->preloadedItems[$x] == $this) {
 					array_splice($this->parent->preloadedItems, $x, 1);
 					break;
