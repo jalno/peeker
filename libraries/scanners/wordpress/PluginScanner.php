@@ -77,7 +77,7 @@ class PluginScanner extends Scanner {
 			if ($response->getStatusCode() != 200) {
 				throw new \Exception("http_status_code");
 			}
-			$debug->reply("done");
+			$log->reply("done");
 		} catch (\Exception $e) {
 			$log->reply("failed!", $e->getMessage());
 			$log->debug("switch to downloads.wordpress.org");
