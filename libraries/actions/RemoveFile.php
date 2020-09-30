@@ -31,6 +31,7 @@ class RemoveFile extends Action implements IActionFile {
 		$log = Log::getInstance();
 		$log->info("delete ", $this->file->getPath());
 		$this->file->delete();
+		$log->reply("Success");
 	}
 
 	public function serialize() {

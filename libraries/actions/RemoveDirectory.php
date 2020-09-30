@@ -1,7 +1,7 @@
 <?php
 namespace packages\peeker\actions;
 
-use packages\base\IO\Directory;
+use packages\base\{Log, IO\Directory};
 use packages\peeker\{Action, IAction, IActionDirectory};
 
 class RemoveDirectory extends Action implements IActionDirectory {
@@ -25,7 +25,10 @@ class RemoveDirectory extends Action implements IActionDirectory {
 	}
 
 	public function do(): void {
+		$log = Log::getInstance();
+		$log->info("delete ", $this->directory->getPath());
 		$this->directory->delete();
+		$log->reply("Success");
 	}
 
 

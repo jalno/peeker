@@ -1,8 +1,8 @@
 <?php
 namespace packages\peeker\actions;
 
-use packages\base\IO\{File, IPreloadedMd5};
-use packages\peeker\{Action, IAction, IActionFile};
+use packages\base\{IO\File, Log};
+use packages\peeker\{Action, IAction, IActionFile, IO\IPreloadedMd5};
 
 class ReplaceFile extends Action implements IActionFile {
 
@@ -37,7 +37,10 @@ class ReplaceFile extends Action implements IActionFile {
 	}
 
 	public function do(): void {
+		$log = Log::getInstance();
+		$log->info("copy", $this->source->getPath(), "to", $this->destination->getPath());
 		$this->source->copyTo($this->destination);
+		$log->reply("Success");
 	}
 
 	public function serialize() {
