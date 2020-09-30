@@ -71,7 +71,7 @@ class HandCheckFile extends Action implements IActionInteractive, IActionFile {
 		if ($this->original) {
 			$answers['R'] = "Replace";
 		}
-		$this->interface->askQuestion("Please check {$this->file->getRealPath()}" . ($this->reason ? ", Reason: {$this->reason}" : ""), $answers, function($answer) {
+		$this->interface->askQuestion("Please check {$this->file->getPath()}" . ($this->reason ? ", Reason: {$this->reason}" : ""), $answers, function($answer) {
 			if ($answer == "S") {
 				$this->interface->showFile($this->file);
 				return;

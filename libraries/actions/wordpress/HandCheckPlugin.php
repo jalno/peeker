@@ -49,7 +49,7 @@ class HandCheckPlugin extends Action implements IActionInteractive, IActionDirec
 			"R" => "Retry",
 			"D" => "Delete",
 		);
-		$this->interface->askQuestion("Please check wordpress plugin {$this->directory->getRealPath()}" . ($this->version ? "@" . $this->version : "") . ($this->reason ? ", Reason: {$this->reason}" : ""), $answers, function($answer) {
+		$this->interface->askQuestion("Please check wordpress plugin {$this->directory->getPath()}" . ($this->version ? "@" . $this->version : "") . ($this->reason ? ", Reason: {$this->reason}" : ""), $answers, function($answer) {
 			if ($answer == "R") {
 				try {
 					scanners\wordpress\PluginScanner::checkPlugin($this->directory);
