@@ -1,163 +1,44 @@
 <?php
 namespace packages\peeker;
-use packages\base\{db\MysqliDb,packages, log, IO\directory\local as directory, IO, IO\file\local as file, http\client};
+
+use packages\base\{db\MysqliDb, Packages, Log, IO\directory, IO, IO\File, Exception};
 
 class WordpressScript extends Script {
-	public static function downloadVersion(string $version) {
-		$repo = new directory(packages::package('peeker')->getFilePath("storage/private/wordpress-versions/{$version}"));
-		$src = $repo->directory("wordpress");
-		if ($src->exists()) {
-			return $src;
-		}
-		if (!$repo->exists()) {
-			$repo->make(true);
-		}
-		$zipFile = new IO\file\tmp();
-		$http = new client();
-		$http->get("https://wordpress.org/wordpress-{$version}.zip", array(
-			'save_as' => $zipFile
-		));
-		$zip = new \ZipArchive();
-		if ($zip->open($zipFile->getPath()) === false) {
-			throw new \Exception("cannot open zip file");
-		}
-		$zip->extractTo($repo->getPath());
-		$zip->close();
-		return $src;
-	}
-	public static function downloadTheme(string $name): ?Directory {
+	public static function getPluginInfo(Directory $pluginDir): array {
+		$response = array();
 		$log = Log::getInstance();
-		$log->info("try find or download theme: {$name}");
-		$repo = Packages::package("peeker")->getHome()->directory("storage/private/themes");
-		if (!$repo->exists()) {
-			$repo->make(true);
+		$log->info("get info about plugin: '{$pluginDir->basename}'");
+		$log->debug("get all php files of plugin");
+		$files = array_filter($pluginDir->files(false), function ($file) {
+			return $file->getExtension() == "php";
+		});
+		$log->reply(count($files), "file found");
+		if (!$files) {
+			$log->warn("it seems plugin is damaged, cuz no has any php file!");
+			return $response;
 		}
-		$src = $repo->directory($name);
-		if ($src->exists()) {
-			return !$src->isEmpty() ? $src : null;
-		} else {
-			$src->make();
-		}
-		$log->info("downloading theme");
-		$http = new Client(array(
-			"base_uri" => "http://peeker.jeyserver.com/",
-		));
-		$zipFile = new IO\file\Tmp();
-		try {
-			$http->get("themes/{$name}.zip", array(
-				"save_as" => $zipFile
-			));
-		} catch (\Exception $e) {
-			$log->reply()->warn("failed!");
-			return null;
-		}
-		$zip = new \ZipArchive();
-		$open = $zip->open($zipFile->getPath());
-		if ($open !== true) {
-			throw new \Exception("Cannot open zip file: " . $open);
-		}
-		$zip->extractTo($src->getPath());
-		$zip->close();
-
-		return $src;
-	}
-	public static function downloadPlugin(string $pluginName, string $version = null, bool $fallback = true): ?Directory {
-		$log = Log::getInstance();
-		$name = $pluginName;
-		if (substr($name, -strlen("-master")) == "-master") {
-			$name = substr($name, 0, -strlen("-master"));
-		}
-		$log->info("try find or download plugin: {$name}, version:", $version, ", fallback:", ($fallback ? "yes" : "no"));
-		$repo = Packages::package("peeker")->getHome()->directory("storage/private/plugins");
-		if (!$repo->exists()) {
-			$repo->make(true);
-		}
-		$src = $repo->directory($name);
-		if (!$src->exists()) {
-			$src->make();
-		}
-		$latest = $src->directory("latest");
-		$requestedVersionSrc = ($version ? $src->directory($version) : null);
-		if ($requestedVersionSrc) {
-			if ($requestedVersionSrc->exists()) {
-				if (!$requestedVersionSrc->isEmpty()) {
-					return $requestedVersionSrc;
+		$template = array(
+			'name'        => 'Plugin Name',
+			'description' => 'Description',
+			'version'     => 'Version',
+			'path'        => 'Text Domain',
+			'pluginURI'   => 'Plugin URI',
+			'author'      => 'Author',
+			'authorURI'   => 'Author URI',
+			'domainPath'  => 'Domain Path',
+			'network'     => 'Network',
+			'requiresWP'  => 'Requires at least',
+			'requiresPHP' => 'Requires PHP',
+		);
+		foreach ($files as $file) {
+			$fileData = $file->read(2048);
+			foreach ($template as $field => $regex) {
+				if (preg_match('/^[ \t\/*#@]*' . preg_quote($regex, '/') . ':(.*)$/mi', $fileData, $matches) and $matches[1]) {
+					$response[$field] = trim($matches[1]);
 				}
-				if (!$fallback) {
-					return null;
-				}
-			} else {
-				$requestedVersionSrc->make();
 			}
 		}
-		if (!$requestedVersionSrc) {
-			if ($latest->exists()) {
-				return !$latest->isEmpty() ? $latest : null;
-			} else {
-				$latest->make();
-			}
-		}
-
-		$zipFile = new IO\file\Tmp();
-		$fileName = ($version ? "{$name}.{$version}" : $name);
-		$log->info("download file: {$fileName}");
-		$log->info("start with peeker.jeyserver.com mirror");
-		try {
-			$response = (new Client(array(
-				"base_uri" => "http://peeker.jeyserver.com/",
-			)))->get("plugins/{$fileName}.zip", array(
-				"save_as" => $zipFile,
-			));
-			if ($response->getStatusCode() != 200) {
-				throw new \Exception("http_status_code");
-			}
-			$log->reply("done");
-		} catch (\Exception $e) {
-			$log->reply()->warn("failed!", $e->getMessage());
-			$log->info("switch to downloads.wordpress.org");
-			try {
-				$response = (new Client(array(
-					"base_uri" => "https://downloads.wordpress.org/",
-				)))->get("plugin/{$fileName}.zip", array(
-					"save_as" => $zipFile,
-				));
-				if ($response->getStatusCode() != 200) {
-					throw new \Exception("http_status_code");
-				}
-				$log->reply("done");
-			} catch (\Exception $e) {
-				$log->reply()->warn("failed!", $e->getMessage());
-				if ($requestedVersionSrc) {
-					$requestedVersionSrc->delete(true);
-				} else {
-					$latest->delete(true);
-				}
-				if (!$src->files(true)) {
-					$src->delete(true);
-				}
-				if ($requestedVersionSrc and $fallback) {
-					$log->warn("try to fallback to find latest version");
-					return self::downloadPlugin($name, null, false);
-				}
-				return null;
-			}
-		}
-		$zip = new \ZipArchive();
-		$open = $zip->open($zipFile->getPath());
-		if ($open !== true) {
-			throw new \Exception("Cannot open zip file: " . $open);
-		}
-		$resultDirectory = ($requestedVersionSrc ? $requestedVersionSrc : $latest);
-		$zip->extractTo($resultDirectory->getPath());
-		$zip->close();
-
-		$sameNameDirectory = $resultDirectory->directory($pluginName);
-		if ($sameNameDirectory->exists()) {
-			$sameNameDirectory->move($resultDirectory->getDirectory());
-			$resultDirectory->getDirectory()->directory($pluginName)->rename($resultDirectory->basename);
-		}
-
-		return $resultDirectory;
+		return $response;
 	}
 	/**
 	 * @var file
@@ -171,14 +52,14 @@ class WordpressScript extends Script {
 	 * @var array
 	 */
 	protected $dbInfo;
-	public function __construct(file $config) {
+	public function __construct(File $config) {
 		parent::__construct($config->getDirectory());
 		$this->config = $config;
 	}
 
 	public function getDatabaseInfo() {
 		if (!$this->dbInfo) {
-			$log = log::getInstance();
+			$log = Log::getInstance();
 			$log->debug("read wp-config.php");
 			$content = $this->config->read();
 			$dbInfo = [];
@@ -235,8 +116,28 @@ class WordpressScript extends Script {
 		if (!$this->db) {
 			$dbInfo = $this->getDatabaseInfo();
 			try {
-
-				$this->db = new MysqliDb('localhost', $dbInfo['username'], $dbInfo['password'], $dbInfo['database']);
+				$sqlServer = "localhost";
+				if ($this->home instanceof Directory\Ftp) {
+					$sqlServer = $this->home->getDriver()->getHostname();
+				} elseif ($this->home instanceof Directory\SFtp) {
+					$sqlServer = $this->home->getDriver()->getSSH()->getHost();
+					$hunch = $this->hunchDbInfo();
+					if ($hunch) {
+						if (isset($hunch['host'])) {
+							$sqlServer = $hunch['host'];
+						}
+						if (isset($hunch['username'])) {
+							$dbInfo['username'] = $hunch['username'];
+						}
+						if (isset($hunch['password'])) {
+							$dbInfo['password'] = $hunch['password'];
+						}
+						if (isset($hunch['database'])) {
+							$dbInfo['database'] = $hunch['database'];
+						}
+					}
+				}
+				$this->db = new MysqliDb($sqlServer, $dbInfo['username'], $dbInfo['password'], $dbInfo['database']);
 				$this->db->setPrefix($dbInfo['prefix']);
 				$this->db->connect();
 			} catch(\Exception $e) {
@@ -244,6 +145,21 @@ class WordpressScript extends Script {
 			}
 		}
 		return $this->db;
+	}
+
+	protected function hunchDbInfo(): ?array {
+		$log = Log::getInstance();
+		$daMyConf = new File\SFTP("/usr/local/directadmin/conf/my.cnf");
+		$daMyConf->setDriver($this->home->getDriver());
+		if ($daMyConf->exists()) {
+			if (preg_match("/user=(.+)\\npassword=(.+)/i", $daMyConf->read(), $matches)) {
+				return array(
+					'host' => $this->home->getDriver()->getSSH()->getHost(),
+					'username' => $matches[1],
+					'password' => $matches[1],
+				);
+			}
+		}
 	}
 	public function getOption(string $name) {
 		try {
@@ -291,11 +207,11 @@ class WordpressScript extends Script {
 	/**
 	 * Set the value of config
 	 *
-	 * @param  file  $config
+	 * @param  File  $config
 	 *
 	 * @return  self
 	 */ 
-	public function setConfig(file $config)
+	public function setConfig(File $config)
 	{
 		$this->config = $config;
 
@@ -308,6 +224,7 @@ class WordpressScript extends Script {
 	 * @return string
 	 */
 	public function jsonSerialize() {
-		return $this->config->getPath();
+		throw new Exception("TODO");
+		return $this->config;
 	}
 }

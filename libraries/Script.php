@@ -1,22 +1,23 @@
 <?php
 namespace packages\peeker;
-use packages\base\IO\directory\local as directory;
+
+use packages\base\IO\Directory;
 
 class Script {
 	/**
-	 * @var directory
+	 * @var Directory
 	 */
 	protected $home;
-	public function __construct(directory $home){
+	public function __construct(Directory $home){
 		$this->home = $home;
 	}
 
 	/**
 	 * Get the value of home
 	 *
-	 * @return  directory
+	 * @return  Directory
 	 */ 
-	public function getHome(): directory {
+	public function getHome(): Directory {
 		return $this->home;
 	}
 
@@ -26,7 +27,7 @@ class Script {
 	 * @param  directory  $home
 	 * @return  void
 	 */ 
-	public function setHome(directory $home) {
+	public function setHome(Directory $home) {
 		$this->home = $home;
 	}
 
@@ -36,6 +37,7 @@ class Script {
 	 * @return string
 	 */
 	public function jsonSerialize() {
+		throw new Exception("TODO");
 		return $this->home->getPath();
 	}
 }
