@@ -10,6 +10,9 @@ class ActionManager {
 	public function __construct(IInterface $interface) {
 		$this->interface = $interface;
 	}
+	public function reset(): void {
+		$this->actions = [];
+	}
 	public function add(Action $action): void {
 		$log = Log::getInstance();
 		if (in_array($action, $this->actions, true)) {
@@ -34,7 +37,7 @@ class ActionManager {
 	}
 	public function delete(IAction $action): void {
 		for ($x = 0, $l = count($this->actions); $x < $l; $x++) {
-			if ($this->actions[$x] == $action) {
+			if ($this->actions[$x] === $action) {
 				array_splice($this->actions, $x, 1);
 				break;
 			}
