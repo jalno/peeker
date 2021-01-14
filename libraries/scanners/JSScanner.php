@@ -26,7 +26,7 @@ class JSScanner extends Scanner {
 		if (!$action) {
 			return;
 		}
-		if (!$action instanceof CleanFile) {
+		if (!$action instanceof actions\CleanFile) {
 			$log->reply("Infacted, Reason:", $action->getReason());
 		}
 		try {
