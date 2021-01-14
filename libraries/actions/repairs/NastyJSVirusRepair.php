@@ -1,8 +1,8 @@
 <?php
 namespace packages\peeker\actions\repairs;
 
-use packages\base\{IO\File, IPreloadedMd5};
-use packages\peeker\{IAction, IActionFile, actions\Repair};
+use packages\base\{IO\File, Log};
+use packages\peeker\{IAction, IActionFile, actions\Repair, IO\IPreloadedMd5};
 
 class NastyJSVirusRepair extends Repair implements IActionFile {
 	protected $file;
@@ -31,6 +31,7 @@ class NastyJSVirusRepair extends Repair implements IActionFile {
 	}
 
 	public function do(): void {
+		$log = Log::getInstance();
 		$log->info("Repair nasty js virues {$this->file->getPath()}");
 		$content = $this->file->read();
 		if ($this->mode == "in-php") {
