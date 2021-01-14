@@ -52,6 +52,12 @@ class WordpressScript extends Script {
 	 * @var array
 	 */
 	protected $dbInfo;
+
+	/**
+	 * @var string|null
+	 */
+	protected $locale;
+
 	public function __construct(File $config) {
 		parent::__construct($config->getDirectory());
 		$this->config = $config;
@@ -151,15 +157,17 @@ class WordpressScript extends Script {
 		$log = Log::getInstance();
 		$daMyConf = new File\SFTP("/usr/local/directadmin/conf/my.cnf");
 		$daMyConf->setDriver($this->home->getDriver());
-		if ($daMyConf->exists()) {
-			if (preg_match("/user=(.+)\\npassword=(.+)/i", $daMyConf->read(), $matches)) {
-				return array(
-					'host' => $this->home->getDriver()->getSSH()->getHost(),
-					'username' => $matches[1],
-					'password' => $matches[2],
-				);
-			}
+		if (!$daMyConf->exists()) {
+			return null;
 		}
+		if (!preg_match("/user=(.+)\\npassword=(.+)/i", $daMyConf->read(), $matches)) {
+			return null;
+		}
+		return array(
+			'host' => $this->home->getDriver()->getSSH()->getHost(),
+			'username' => $matches[1],
+			'password' => $matches[2],
+		);
 	}
 	public function getOption(string $name) {
 		try {
