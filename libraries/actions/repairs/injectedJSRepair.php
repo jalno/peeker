@@ -1,8 +1,8 @@
 <?php
 namespace packages\peeker\actions\repairs;
 
-use packages\base\{IO\File, IPreloadedMd5, Log};
-use packages\peeker\{IAction, IActionFile, actions\Repair};
+use packages\base\{IO\File, Log};
+use packages\peeker\{IAction, IActionFile, actions\Repair, IO\IPreloadedMd5};
 
 class InjectedJSRepair extends Repair implements IActionFile {
 	protected $file;
