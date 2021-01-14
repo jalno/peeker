@@ -238,7 +238,7 @@ class PluginScanner extends Scanner {
 		foreach ($directories as $item) {
 			if ($item->basename == "plugins" and $directory->basename == "wp-content") {
 				yield from $item->directories(false);
-			} elseif (!in_array($item->basename, [".quarantine", ".tmb", ".well-known", "cgi-bin", "wp-admin", "wp-includes"])) {
+			} elseif (!in_array($item->basename, [".quarantine", ".tmb", ".well-known", "cgi-bin", "wp-admin", "wp-includes", "busting"])) {
 				yield from $this->findPlugins($item);
 			}
 		}
