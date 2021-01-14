@@ -2,7 +2,7 @@
 namespace packages\peeker\actions;
 
 use packages\base\{IO\File, Log};
-use packages\peeker\{Action, IAction, IActionFile, IPreloadedMd5};
+use packages\peeker\{Action, IAction, IActionFile, IO\IPreloadedMd5};
 
 class RemoveFile extends Action implements IActionFile {
 
