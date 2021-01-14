@@ -176,6 +176,10 @@ class WordpressScanner extends Scanner {
 				return (new actions\RemoveFile($file))
 					->setReason('extra-php-file-in-wp-content');
 			}
+			if ($ext == "php" and !preg_match("/^(wp-(admin|includes|content)\/.*)?[^\/]+\.php$/", $path)) {
+				return (new actions\RemoveFile($file))
+					->setReason('extra-php-in-wordpress-home');
+			}
 			if (in_array($file->basename, ['php.ini', '.user.ini'])) {
 				$content = $file->read();
 				if (preg_match("/(exec|basedir|safe_mode|disable_)/", $content)) {
