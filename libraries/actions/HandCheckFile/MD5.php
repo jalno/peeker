@@ -2,6 +2,12 @@
 namespace packages\peeker\actions\HandCheckFile;
 use packages\base\{db, Date, Exception};
 
+/**
+ * @property string|null $md5
+ * @property reason|null $reason
+ * @property int|null $update_at
+ * @property string|null $action
+ */
 class MD5 extends db\dbObject {
 	const OK = 1;
 	const DELETE = 2;
@@ -32,6 +38,8 @@ class MD5 extends db\dbObject {
 				return "D";
 			case self::REPLACE:
 				return "R";
+			default:
+				throw new Exception("unexcepted action: {$this->action}");
 		}
 	}
 	public function fromAnswer(string $answer): void {
