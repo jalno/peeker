@@ -50,7 +50,6 @@ class PHPScanner extends Scanner {
 		$badNames = ["adminer.php", "wp.php", "wpconfig.bak.php", "wp-build-report.php", "wp-stream.php"];
 		$badNamesPatterns = ["/_index\.php$/"];
 		if (in_array($file->basename, $badNames)) {
-			$this->actions->add();
 			return (new actions\RemoveFile($file))
 				->setReason('bad-name-php');
 		}
