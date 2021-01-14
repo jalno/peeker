@@ -8,6 +8,7 @@ class Script {
 	 * @var Directory
 	 */
 	protected $home;
+
 	public function __construct(Directory $home){
 		$this->home = $home;
 	}
@@ -37,7 +38,7 @@ class Script {
 	 * @return string
 	 */
 	public function jsonSerialize() {
-		throw new Exception("TODO");
+		throw new \packages\base\Exception("TODO");
 		return $this->home->getPath();
 	}
 }
