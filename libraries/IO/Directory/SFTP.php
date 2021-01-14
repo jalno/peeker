@@ -1,7 +1,7 @@
 <?php
 namespace packages\peeker\IO\Directory;
 
-use packages\base\{IO\Directory\SFTP as BaseDirectorySFTP, IO\File\SFTP as BaseFileSFTP, Exception};
+use packages\base\{IO as baseIO, IO\Directory\SFTP as BaseDirectorySFTP, IO\File\SFTP as BaseFileSFTP, Exception};
 use packages\peeker\IO\{IPreloadedMd5, File};
 
 class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedMd5 {
@@ -33,7 +33,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 			}
 			if ($matches[1] == 'd') {
 				$path .= "/";
-				$item = new static($path);
+				$item = new SFTP($path);
 				$item->preloadedItems = [];
 			} else {
 				$item = new File\SFTP($path);
@@ -148,7 +148,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 					if($basename != '.' and $basename != '..'){
 						$item = $dir.'/'.$basename;
 						if($driver->is_dir($item)){
-							$directory = new static($item);
+							$directory = new SFTP($item);
 							$directory->setDriver($driver);
 							$items[] = $directory;
 							if($recursively){
@@ -187,7 +187,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 							$file->setDriver($driver);
 							$items[] = $file;
 						}elseif($driver->is_dir($item)){
-							$directory = new static($item);
+							$directory = new SFTP($item);
 							$directory->setDriver($driver);
 							$items[] = $directory;
 							if($recursively){
@@ -239,7 +239,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 				}
 			}
 		}
-		$directory = new static($this->getPath() . '/' . $name);
+		$directory = new SFTP($this->getPath() . '/' . $name);
 		$directory->setDriver($this->getDriver());
 		return $directory;
 	}
@@ -248,7 +248,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 		if ($this->parent) {
 			return $this->parent;
 		}
-		$directory = new static($this->dirname);
+		$directory = new SFTP($this->directory);
 		$directory->setDriver($this->getDriver());
 		return $directory;
 	}
@@ -272,4 +272,48 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 		}
     }
 
+	
+	public function createPreloadedFile(string $name): baseIO\File {
+		if ($this->preloadedItems === null) {
+			$this->preloadedItems = [];
+		}
+		
+		$firstSlash = strpos($name, "/");
+		$firstPart = $firstSlash !== false ? substr($name, 0, $firstSlash) : $name;
+		$found = null;
+		foreach ($this->preloadedItems as $item) {
+			if ($item->basename == $firstPart) {
+				$found = $item;
+				break;
+			}
+		}
+		if (!$found) {
+			$found = $firstSlash === false ? new File\SFTP($this->getPath() . "/" . $firstPart) : new SFTP($this->getPath() . "/" . $firstPart);
+			$found->setDriver($this->getDriver());
+			$this->preloadedItems[] = $found;
+		}
+		return $firstSlash === false ? $found : $found->createPreloadedFile(substr($name, $firstSlash + 1));
+	}
+
+	public function createPreloadedDirectory(string $path): IPreloadedDirectory {
+		if ($this->preloadedItems === null) {
+			$this->preloadedItems = [];
+		}
+		
+		$firstSlash = strpos($path, "/");
+		$firstPart = $firstSlash !== false ? substr($path, 0, $firstSlash) : $path;
+		$found = null;
+		foreach ($this->preloadedItems as $item) {
+			if ($item->basename == $firstPart) {
+				$found = $item;
+				break;
+			}
+		}
+		if (!$found) {
+			$found = new SFTP($this->getPath() . "/" . $firstPart);
+			$found->setDriver($this->getDriver());
+			$this->preloadedItems[] = $found;
+		}
+		return $firstSlash === false ? $found : $found->createPreloadedDirectory(substr($path, $firstSlash + 1));
+	}
 }

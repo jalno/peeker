@@ -2,7 +2,7 @@
 namespace packages\peeker\actions;
 
 use packages\base\{IO\File, Log};
-use packages\peeker\{Action, IAction, IActionFile, IO\IPreloadedMd5};
+use packages\peeker\{Action, IAction, IActionFile, IO\IPreloadedMd5, IO\Directory\IPreloadedDirectory, Scanner};
 
 class ReplaceFile extends Action implements IActionFile {
 
@@ -39,7 +39,19 @@ class ReplaceFile extends Action implements IActionFile {
 	public function do(): void {
 		$log = Log::getInstance();
 		$log->info("copy", $this->source->getPath(), "to", $this->destination->getPath());
-		$this->source->copyTo($this->destination);
+		if (!$this->destination->exists()) {
+			if (!$this->destination->getDirectory()->exists()) {
+				$this->destination->getDirectory()->make();
+			}
+			if ($this->scanner instanceof Scanner) {
+				$home = $this->scanner->getHome();
+				if ($home instanceof IPreloadedDirectory) {
+					$path = $home->getRelativePath($this->destination);
+					$this->destination = $home->createPreloadedFile($path);
+				}
+			}
+		}
+		$this->destination->copyFrom($this->source);
 		$log->reply("Success");
 	}
 

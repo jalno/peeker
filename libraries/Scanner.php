@@ -12,6 +12,10 @@ abstract class Scanner implements IScanner {
 		$this->home = $home;
 	}
 
+	public function getHome(): Directory {
+		return $this->home;
+	}
+
 	public function prepare(): void {
 	}
 }

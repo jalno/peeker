@@ -1,6 +1,7 @@
 <?php
 namespace packages\peeker\IO\File;
 
+use packages\base\{IO as BaseIO, Exception};
 use packages\base\IO\File\SFTP as BaseSFTP;
 use packages\peeker\IO\{Directory, IPreloadedMd5};
 
@@ -18,12 +19,42 @@ class SFTP extends BaseSFTP implements IPreloadedMd5 {
 		return $result;
 	}
 
+	public function copyTo(BaseIO\File $dest): bool{
+		$result = parent::copyTo($dest);
+		if ($result and $dest instanceof IPreloadedMd5) {
+			$dest->preloadedMd5 = $this->preloadedMd5;
+			if ($dest->parent instanceof Directory\IPreloadedDirectory) {
+				$cache = $dest->parent->createPreloadedFile($dest->basename);
+				$cache->preloadMd5 = $this->preloadedMd5;
+			}
+		}
+		return $result;
+	}
+
+	public function copyFrom(BaseIO\File $source): bool{
+		$result = parent::copyFrom($source);
+		if ($result) {
+			if ($source instanceof IPreloadedMd5) {
+				$this->preloadedMd5 = $source->preloadedMd5;
+			} elseif ($source instanceof baseIO\File\Local) {
+				$this->preloadedMd5 = $source->md5();
+			} else {
+				$this->preloadedMd5 = null;
+			}
+			if ($this->parent instanceof Directory\IPreloadedDirectory) {
+				$cache = $this->parent->createPreloadedFile($this->basename);
+				$cache->preloadMd5 = $this->preloadedMd5;
+			}
+		}
+		return $result;
+	}
+
 	public function isPreloadMd5(): bool {
 		return $this->preloadedMd5 !== null;
 	}
 	
 	public function preloadMd5(): void {
-		$line = $this->getDriver()->getSSH()->execute("md5sum " . $this->getPath());
+		$line = $this->getDriver()->getSSH()->execute("md5sum \"" . $this->getPath() ."\"");
 		if (!preg_match("/^([a-z0-9]{32})\s+(.+)$/", $line, $matches)) {
 			throw new Exception("invalid line");
 		}
@@ -48,7 +79,9 @@ class SFTP extends BaseSFTP implements IPreloadedMd5 {
 		if ($this->parent) {
 			return $this->parent;
 		}
-		return parent::getDirectory();
+		$directory = new Directory\SFTP($this->directory);
+		$directory->setDriver($this->getDriver());
+		return $directory;
 	}
 
 	public function delete(): void {
@@ -61,5 +94,5 @@ class SFTP extends BaseSFTP implements IPreloadedMd5 {
 				}
 			}
 		}
-    }
+	}
 }
