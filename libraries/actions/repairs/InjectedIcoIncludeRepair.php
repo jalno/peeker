@@ -2,7 +2,7 @@
 namespace packages\peeker\actions\repairs;
 
 use packages\base\{IO\File, Log};
-use packages\peeker\{IAction, IActionFile, IPreloadedMd5, actions\Repair};
+use packages\peeker\{IAction, IActionFile, IO\IPreloadedMd5, actions\Repair};
 
 class InjectedIcoIncludeRepair extends Repair implements IActionFile {
 	protected $file;
