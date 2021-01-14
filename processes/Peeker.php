@@ -1,7 +1,7 @@
 <?php
 namespace packages\peeker\processes;
 
-use packages\base\{Log, Cli, SSH, IO, IO\Directory, Process, Packages, View\Error};
+use packages\base\{Log, Cli, SSH, IO, IO\Directory, Process, Packages, View\Error, Exception};
 use packages\peeker\{interfaces, scanners, ActionManager, IActionInteractive, actions, IO\Directory\SFTP as SFTPDirectory, IO\Directory\IPreloadedDirectory, IO\IPreloadedMd5};
 
 class Peeker extends process {
@@ -22,11 +22,16 @@ class Peeker extends process {
 			throw $e;
 		}
 		$users = $this->getUsersHome($root, $data);
-		$doneUsers = [];
-
+		
 		$cli = new interfaces\CLI();
 		$this->actions = new ActionManager($cli);
 		
+		$this->scanUsers($users);
+	}
+	protected function scanUsers(array $users): void {
+		$log = Log::getInstance();
+
+		$this->actions->reset();
 		$lastTimeHasActions = 1;
 		$repeats = 0;
 		while (($this->countActions(false, true, true) or $lastTimeHasActions) and $repeats < $this->maxCycles) {
@@ -47,6 +52,11 @@ class Peeker extends process {
 				$this->actions->doActions();
 			}
 		}
+
+		$log->info("reset permissions");
+		$this->resetPermissions($users);
+		$log->reply("Success");
+
 		if ($repeats >= $this->maxCycles) {
 			throw new Error("there is more to do");
 		}
@@ -55,6 +65,7 @@ class Peeker extends process {
 		$log = Log::getInstance();
 		if ($user instanceof IPreloadedDirectory) {
 			$log->info("preloading the user directory");
+			$user->resetItems();
 			$user->preloadItems();
 			$log->reply("success");
 		}
@@ -80,7 +91,7 @@ class Peeker extends process {
 				$log = Log::getInstance();
 				$log->info($class);
 				$currentActions = $this->countActions();
-				$scanner = new $class($this->actions, $user->directory("domains"));
+				$scanner = new $class($this->actions, $user);
 				$scanner->prepare();
 				$scanner->scan();
 				$log->reply($this->countActions() - $currentActions, "new actions");
@@ -181,5 +192,19 @@ class Peeker extends process {
 			$log->reply(count($users), "found");
 		}
 		return $users;
+	}
+	protected function resetPermissions(array $users): void {
+		$log = Log::getInstance();
+		foreach ($users as $user) {
+			if (preg_match("/\/home\/([^\/]+)\//", $user->getPath(), $matches)) {
+				$cmd = "chown -R {$matches[1]}:{$matches[1]} " . $user->getPath();
+				$log->info($cmd);
+				if ($user instanceof IO\Directory\Local) {
+					shell_exec($cmd);
+				} elseif ($user instanceof IO\Directory\SFTP) {
+					$user->getDriver()->getSSH()->execute($cmd);
+				}
+			}
+		}
 	}
 }
