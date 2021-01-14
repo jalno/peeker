@@ -1,8 +1,8 @@
 <?php
 namespace packages\peeker\actions\wordpress;
 
-use packages\base\{Log, Exception};
-use packages\peeker\{IActionDatabase, IActionInteractive, IAction, IInterface, WordpressScript, actions\Repair};
+use packages\base\{Log, Exception, Validator, InputValidationException};
+use packages\peeker\{IActionDatabase, IActionInteractive, IAction, IInterface, WordpressScript, actions\Repair, events};
 
 class SiteURLRepair extends Repair implements IActionDatabase, IActionInteractive {
 
@@ -35,12 +35,23 @@ class SiteURLRepair extends Repair implements IActionDatabase, IActionInteractiv
 	}
 
 	public function hasQuestions(): bool {
+		if (!$this->answer) {
+			(new events\wordpress\SiteURLRepair($this))->trigger();
+		}
 		return !$this->answer;
+	}
+
+	public function setAnswer(?string $answer): void {
+		$this->answer = $answer;
 	}
 
 	public function askQuestions(): void {
 		$this->interface->askQuestion("In seems the site url have been changed, please provide a correct one", null, function($answer) {
-			$this->answer = $answer ? rtrim($answer, "/") . "/" : "";
+			try {
+				$answer = (new Validator\URLValidator())->validate("siteurl", [], $answer);
+				$this->answer = $answer ? rtrim($answer, "/") . "/" : "";
+			} catch (InputValidationException $e) {
+			}
 		});
 	}
 
