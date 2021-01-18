@@ -47,7 +47,16 @@ class PHPScanner extends Scanner {
 		}
 	}
 	protected function checkFileName(File $file): ?IAction {
-		$badNames = ["adminer.php", "wp.php", "wpconfig.bak.php", "wp-build-report.php", "wp-stream.php"];
+		$badNames = [
+			"adminer.php",
+			"pma.php", "phpmyadmin.php",
+			"wp.php",
+			"wpconfig.bak.php",
+			"wp-build-report.php",
+			"wp-stream.php",
+			"1index.php",
+			"aindex.php"
+		];
 		$badNamesPatterns = ["/_index\.php$/"];
 		if (in_array($file->basename, $badNames)) {
 			return (new actions\RemoveFile($file))
@@ -62,7 +71,7 @@ class PHPScanner extends Scanner {
 		return null;
 	}
 	public function checkFileSource(File $file): ?IAction {
-		$log = Log::getInstance();		
+		$log = Log::getInstance();
 		$rules = array(
 			array(
 				'type' => 'exact',
@@ -151,13 +160,23 @@ class PHPScanner extends Scanner {
 			),
 			array(
 				'type' => 'pattern',
-				'needle' => '/^<script .+<\?php/i',
+				'needle' => '/^<script.+<\?php/i',
 				'action' => new actions\repairs\InjectedLowerbeforwardenRepair($file, 'php'),
 			),
 			array(
 				'type' => 'pattern',
 				'needle' => '/^<script .* src=.*temp\.js.*/i',
 				'action' => new actions\repairs\InjectedLowerbeforwardenRepair($file, 'html'),
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/<script.*src=\".*hostingcloud.*\".*><\/script>/i',
+				'action' => new actions\repairs\InjectedHostingCloudRacing($file, 'default'),
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/<script>.*Client.Anonymous.*<\/script>/i',
+				'action' => new actions\repairs\InjectedHostingCloudRacing($file, 'default'),
 			),
 			array(
 				'type' => 'pattern',
@@ -223,6 +242,11 @@ class PHPScanner extends Scanner {
 			array(
 				'type' => 'pattern',
 				'needle' => "/^\<\?php .{200,}/",
+				'action' => new actions\HandCheckFile($file),
+			),
+			array(
+				'type' => 'pattern',
+				'needle' => "/^<script .{30,}<\/script>/",
 				'action' => new actions\HandCheckFile($file),
 			),
 			array(
