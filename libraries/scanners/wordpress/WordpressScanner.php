@@ -68,7 +68,7 @@ class WordpressScanner extends Scanner {
 
 		$files = $this->getFiles($this->home);
 		foreach ($files as $file) {
-			$path = $this->home->getRelativePath($file);
+			$path = $file->getRelativePath($this->home);
 			$log->debug("check", $path);
 			$this->scanFile($file);
 		}
@@ -81,7 +81,7 @@ class WordpressScanner extends Scanner {
 		}
 		$isClean = $action instanceof actions\CleanFile;
 		if (!$isClean) {
-			$path = $this->home->getRelativePath($file);
+			$path = $file->getRelativePath($this->home);
 			$log->info($path, "Infacted, Reason:", $action->getReason());
 		}
 		try {
@@ -123,7 +123,7 @@ class WordpressScanner extends Scanner {
 				->setReason('bad-name');
 		}
 
-		$path = $this->home->getRelativePath($file);
+		$path = $file->getRelativePath($this->home);
 
 		if (preg_match("/^wp-content\/themes\/([^\/]+)/", $path, $matches) and ThemeScanner::isOriginalTheme($matches[1])) {
 			return null;

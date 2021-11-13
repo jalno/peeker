@@ -46,7 +46,7 @@ class ReplaceFile extends Action implements IActionFile {
 			if ($this->scanner instanceof Scanner) {
 				$home = $this->scanner->getHome();
 				if ($home instanceof IPreloadedDirectory) {
-					$path = $home->getRelativePath($this->destination);
+					$path = $this->destination->getRelativePath($home);
 					$this->destination = $home->createPreloadedFile($path);
 				}
 			}

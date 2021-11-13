@@ -51,7 +51,7 @@ class ThemeScanner extends Scanner {
 			}
 			$isClean = $action instanceof actions\CleanFile;
 			if (!$isClean) {
-				$path = $this->home->getRelativePath($file);
+				$path = $file->getRelativePath($this->home);
 				$log->info($path, "Infacted, Reason:", $action->getReason());
 			}
 			try {
@@ -73,7 +73,7 @@ class ThemeScanner extends Scanner {
 
 	protected function checkFile(array $theme, File $file): ?IAction {
 		$isOriginalTheme = self::isOriginalTheme($theme['directory']->basename);
-		$path = $theme['directory']->getRelativePath($file);
+		$path = $file->getRelativePath($theme['directory']);
 		if (in_array($path, ['header.php', 'single.php'])) {
 			return null;
 		}
@@ -128,7 +128,7 @@ class ThemeScanner extends Scanner {
 			return;
 		}
 		foreach ($this->getFiles($version, ['js', 'php']) as $file) {
-			$path = $version->getRelativePath($file);
+			$path = $file->getRelativePath($version);
 			$local = $theme->file($path);
 			if (!$local->exists()) {
 				$this->actions->add((new actions\ReplaceFile($local, $file))->setReason("missing theme file"));
@@ -139,7 +139,7 @@ class ThemeScanner extends Scanner {
 	protected function checkMatchesOfTheme(Directory $theme, Directory $version): int {
 		$matches = 0;
 		foreach ($version->files(true) as $file) {
-			$path = $version->getRelativePath($file);
+			$path = $file->getRelativePath($version);
 			$local = $theme->file($path);
 			if ($local->exists() and $local->md5() == $file->md5()) {
 				$matches++;

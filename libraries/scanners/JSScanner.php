@@ -11,7 +11,7 @@ class JSScanner extends Scanner {
 		$log = Log::getInstance();
 		$files = $this->getFiles($this->home, array('js', 'json'));
 		foreach ($files as $file) {
-			$path = $this->home->getRelativePath($file);
+			$path = $file->getRelativePath($this->home);
 			$log->debug("check", $path);
 			$this->scanFile($file);
 		}
