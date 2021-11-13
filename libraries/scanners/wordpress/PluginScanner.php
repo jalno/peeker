@@ -154,7 +154,7 @@ class PluginScanner extends Scanner {
 			$action = $this->checkFile($plugin, $file);
 			$isClean = $action instanceof actions\CleanFile;
 			if (!$isClean) {
-				$path = $this->home->getRelativePath($file);
+				$path = $file->getRelativePath($this->home);
 				$log->info($path, "Infacted, Reason:", $action->getReason());
 			}
 			try {
@@ -181,7 +181,7 @@ class PluginScanner extends Scanner {
 	}
 
 	protected function checkFile(array $plugin, File $file): IAction {
-		$path = $plugin['directory']->getRelativePath($file);
+		$path = $file->getRelativePath($plugin['directory']);
 		$original = $plugin['original']->file($path);
 		if (!$original->exists()) {
 			return (new actions\RemoveFile($file))
@@ -198,7 +198,7 @@ class PluginScanner extends Scanner {
 	protected function preparePlugin(Directory $plugin): void {
 		$log = Log::getInstance();
 		try {
-			$path = $this->home->getRelativePath($plugin);
+			$path = $plugin->getRelativePath($this->home);
 			$log->info("Check " . $path);
 			$original = self::checkPlugin($plugin);
 			$this->plugins[$plugin->basename] = array(
@@ -208,7 +208,7 @@ class PluginScanner extends Scanner {
 			$log->reply("done");
 
 			foreach ($this->getFiles($original) as $file) {
-				$local = $plugin->file($original->getRelativePath($file));
+				$local = $plugin->file($file->getRelativePath($original));
 				if (!$local->exists()) {
 					$this->actions->add((new actions\ReplaceFile($local, $file))->setReason("missing plugin file"));
 				}

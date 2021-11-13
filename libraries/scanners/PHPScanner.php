@@ -11,7 +11,7 @@ class PHPScanner extends Scanner {
 		$log = Log::getInstance();
 		$files = $this->getFiles($this->home, array('php'));
 		foreach ($files as $file) {
-			$path = $this->home->getRelativePath($file);
+			$path = $file->getRelativePath($this->home);
 			$log->debug("check", $path);
 			$this->scanFile($file);
 		}
@@ -27,7 +27,7 @@ class PHPScanner extends Scanner {
 			return;
 		}
 		if (!$action instanceof actions\CleanFile) {
-			$path = $this->home->getRelativePath($file);
+			$path = $file->getRelativePath($this->home);
 			$log->info($path, "Infacted");
 			$log->reply()->debug("Reason:", $action->getReason());
 		}
