@@ -99,6 +99,11 @@ class PHPScanner extends Scanner {
 				'action' => new actions\RemoveFile($file),
 			),
 			array(
+				'type' => 'pattern',
+				'needle' => '/^<img.+onerror=\"eval.+(<\?php)/',
+				'action' => new actions\repairs\InjectedImageRepair($file),
+			),
+			array(
 				'type' => 'exact',
 				'needle' => 'eval(gzuncompress(',
 				'action' => new actions\RemoveFile($file),
