@@ -299,6 +299,17 @@ class PHPScanner extends Scanner {
 				'needle' => '/(curl_init|curl_setopt|copy|file_get_content|fopen|md5)\s*\(.*\$_(GET|POST|REQUEST|COOKIE).*\)/i',
 				'action' => new actions\HandCheckFile($file),
 			),
+			array(
+				'type' => 'pattern',
+				'needle' => '/' .
+					'^\<\?php\R?.*' .
+					'PCFET0NUWVBFIEhUTUwgUFVCTElDICItLy9JRVRGLy9EVEQgSFRNTCAyLjAvL0VOIj4KPGh0bWw\+PG' . '\R?' .
+					'hlYWQ\+Cjx0aXRsZT40MDMgRm9yYmlkZGVuPC90aXRsZT4KPC9oZWFkPjxib2R5Pgo8aDE\+Rm9yYmlkZGVuPC9oMT4KPHA\+WW91IGRvbid0IGhhdmUgcGVybWlzc2lvbiB0byBhY2Nlc3MgdGhpcyByZXNvdXJjZS48L3A\+Cjxocj4KPC\R?' .
+					'9ib2R5PjwvaHRtbD4\=' . '.*die.*' . '\R?' .
+					'\?\>' .
+				'/',
+				'action' => new actions\repairs\ForbiddenBase64Repair($file),
+			),
 		);
 		$content = $file->read();
 
