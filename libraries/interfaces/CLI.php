@@ -40,10 +40,10 @@ class CLI implements IInterface {
 			$file->copyTo($nanoFile); 
 		}
 		$initMd5 = $nanoFile->md5();
-		$help = system("nano --help");
-		$shupportLineNumber = strpos($help, "--linenumbers") !== false;
+		system('nano --help | grep linenumbers > /dev/null', $exitCode);
+		$supportLineNumber = $exitCode == 0;
 
-		system('nano ' . ($shupportLineNumber ? '--linenumbers ' : '') . '--softwrap ' . $nanoFile->getPath() . ' > `tty`');
+		system('nano ' . ($supportLineNumber ? '--linenumbers ' : '') . '--softwrap ' . $nanoFile->getPath() . ' > `tty`');
 		if ($nanoFile !== $file and $nanoFile->md5() != $initMd5) {
 			$nanoFile->copyTo($file);
 		}
