@@ -1,5 +1,7 @@
 <?php
+
 namespace packages\peeker;
 
-interface IActionDatabase extends IAction {
+interface IActionDatabase extends IAction
+{
 }
