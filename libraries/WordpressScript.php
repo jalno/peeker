@@ -187,7 +187,7 @@ class WordpressScript extends Script
         return [
             'host' => $this->home->getDriver()->getSSH()->getHost(),
             'username' => $matches[1],
-            'password' => $matches[2],
+            'password' => trim($matches[2], "\""),
         ];
     }
 
