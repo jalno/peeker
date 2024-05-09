@@ -6,14 +6,20 @@ use packages\base\Exception;
 use packages\base\IO as baseIO;
 use packages\base\IO\Directory\SFTP as BaseDirectorySFTP;
 use packages\base\IO\File\SFTP as BaseFileSFTP;
+use packages\base\Log;
 use packages\peeker\IO\File;
 use packages\peeker\IO\IPreloadedMd5;
 
 class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedMd5
 {
     public $parent;
-    public $preloadedItems;
-    protected $preloadedMd5 = false;
+
+    /**
+     * @var array<File\SFTP|self>|null
+     */
+    public ?array $preloadedItems = null;
+
+    protected bool $preloadedMd5 = false;
 
     public function isPreloadItems(): bool
     {
@@ -22,46 +28,73 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
 
     public function preloadItems(): void
     {
-        $root = rtrim($this->getPath(), '/').'/';
-        $lines = $this->getDriver()->getSSH()->execute("find -P {$root} \( -type f -or -type d \) -printf \"%y\\t%p\\n\"");
+        $log = Log::getInstance();
+        
+        $root = $this;
+        $rootPath = rtrim($root->getPath(), '/').'/';
+        
+        $log->debug("Preloading directories");
 
-        $lastPath = $root;
-        $lastDirectory = $this;
+        $lines = $this->getDriver()->getSSH()->execute("find -P {$rootPath} -type d");
+        $lines = explode("\n", $lines);
 
-        foreach (explode("\n", $lines) as $line) {
-            if (!$line) {
-                continue;
-            }
-            if (!preg_match("/^(f|d)\s+(.+)$/", $line, $matches)) {
-                throw new Exception('invalid line');
-            }
-            $path = $matches[2];
-            if ($path == $root) {
-                continue;
-            }
-            if ('d' == $matches[1]) {
-                $path .= '/';
-                $item = new SFTP($path);
-                $item->preloadedItems = [];
-            } else {
-                $item = new File\SFTP($path);
-            }
-            $item->setDriver($this->getDriver());
+        $driver = $root->getDriver();
+        $root->preloadedItems = [];
+        $root->preloadedMd5 = false;
+    
+        for ($x = 1, $l = count($lines); $x < $l - 1; $x++)
+        {
+            $path = $lines[$x];
 
-            while (substr($path, 0, strlen($lastPath)) != $lastPath) {
-                $lastPath = $lastDirectory->parent->getPath().'/';
-                $lastDirectory = $lastDirectory->parent;
+            while(!str_starts_with($path, rtrim($root->getPath(), '/') . '/')) {
+                $root = $root->parent;
             }
-            $item->parent = $lastDirectory;
-            if (null === $item->parent->preloadedItems) {
-                $item->parent->preloadedItems = [];
-            }
-            $item->parent->preloadedItems[] = $item;
-            if ('d' == $matches[1]) {
-                $lastPath = $path;
-                $lastDirectory = $item;
-            }
+
+            $sub = new self($path);
+            $sub->setDriver($driver);
+            $sub->preloadedItems = [];
+            $sub->preloadedMd5 = true;
+            $sub->parent = $root;
+
+            $root->preloadedItems[] = $sub;
+            $root = $sub;
         }
+        $log->reply($l - 2);
+
+        $log->debug("Preloading files alongside their md5");
+        $lines = $this->getDriver()->getSSH()->execute("find -P {$rootPath} -type f -exec md5sum {} \;");
+        $lines = explode("\n", $lines);
+
+        $rootPathLength = strlen($rootPath);
+        for ($x = 0, $l = count($lines); $x < $l - 1; $x++)
+        {
+            $line = $lines[$x];
+            $md5 = substr($line, 0, 32);
+            $path = substr($line, 32 + 2);
+        
+            $dirpath = substr($path, $rootPathLength);
+            $dirpath = explode("/", $dirpath);
+            array_pop($dirpath);
+
+            $dir = $this;
+            foreach ($dirpath as $dirname) {
+                foreach ($dir->preloadedItems as $i) {
+                    if ($i instanceof self and $i->basename == $dirname) {
+                        $dir = $i;
+                        break;
+                    }
+                }
+            }
+
+            $file = new File\SFTP($path);
+            $file->setDriver($driver);
+            $file->preloadedMd5 = $md5;
+            $file->parent = $dir;
+            $dir->preloadedItems[] = $file;
+        }
+        $log->reply($l - 1);
+
+        $this->preloadedMd5 = true;
     }
 
     public function resetItems(): void
@@ -79,28 +112,6 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
         if (!$this->isPreloadItems()) {
             $this->preloadItems();
         }
-        $files = $this->files(true);
-        for ($x = 0, $l = count($files); $x < $l; $x += 100) {
-            $part = array_slice($files, $x, 100);
-            $paths = array_map(function ($file) {
-                return '"'.$file->getPath().'"';
-            }, $part);
-            echo "do\n";
-            $lines = $this->getDriver()->getSSH()->execute('md5sum '.implode(' ', $paths));
-            echo "done\n";
-            $y = 0;
-            foreach (explode("\n", $lines) as $line) {
-                if (!$line) {
-                    continue;
-                }
-                if (!preg_match("/^([a-z0-9]{32})\s+(.+)$/", $line, $matches)) {
-                    throw new Exception("invalid line: {$line}");
-                }
-                $files[$x + $y]->preloadedMd5 = $matches[1];
-                ++$y;
-            }
-        }
-        $this->preloadedMd5 = true;
     }
 
     public function resetMd5(): void
@@ -121,34 +132,15 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
     public function files(bool $recursively = false): array
     {
         if (!$this->isPreloadItems()) {
-            $driver = $this->getDriver();
-            $scanner = function ($dir) use ($recursively, $driver, &$scanner) {
-                $items = [];
-                $handle = $driver->opendir($dir);
-                while (($basename = readdir($handle)) !== false) {
-                    if ('.' != $basename and '..' != $basename) {
-                        $item = $dir.'/'.$basename;
-                        if ($driver->is_file($item)) {
-                            $file = new File\SFTP($item);
-                            $file->setDriver($driver);
-                            $items[] = $file;
-                        } elseif ($recursively and $driver->is_dir($item)) {
-                            $items = array_merge($items, $scanner($item));
-                        }
-                    }
-                }
-
-                return $items;
-            };
-
-            return $scanner($this->getPath());
+            return parent::files($recursively);
         }
+    
         $items = [];
         foreach ($this->preloadedItems as $item) {
             if ($item instanceof BaseFileSFTP) {
                 $items[] = $item;
             } elseif ($item instanceof BaseDirectorySFTP and $recursively) {
-                $items = array_merge($items, $item->files(true));
+                array_push($items, ...$item->files(true));
             }
         }
 
@@ -158,36 +150,17 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
     public function directories(bool $recursively = true): array
     {
         if (!$this->isPreloadItems()) {
-            $driver = $this->getDriver();
-            $scanner = function ($dir) use ($recursively, $driver, &$scanner) {
-                $items = [];
-                $handle = $driver->opendir($dir);
-                while (($basename = readdir($handle)) !== false) {
-                    if ('.' != $basename and '..' != $basename) {
-                        $item = $dir.'/'.$basename;
-                        if ($driver->is_dir($item)) {
-                            $directory = new SFTP($item);
-                            $directory->setDriver($driver);
-                            $items[] = $directory;
-                            if ($recursively) {
-                                $items = array_merge($items, $scanner($item));
-                            }
-                        }
-                    }
-                }
-
-                return $items;
-            };
-
-            return $scanner($this->getPath());
+            return parent::directories($recursively);
         }
+
         $items = [];
         foreach ($this->preloadedItems as $item) {
-            if ($item instanceof BaseDirectorySFTP) {
-                $items[] = $item;
-                if ($recursively) {
-                    $items = array_merge($items, $item->directories(true));
-                }
+            if (!$item instanceof BaseDirectorySFTP) {
+                continue;
+            }
+            $items[] = $item;
+            if ($recursively) {
+                array_push($items, ...$item->directories(true));
             }
         }
 
@@ -197,38 +170,14 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
     public function items(bool $recursively = true): array
     {
         if (!$this->isPreloadItems()) {
-            $driver = $this->getDriver();
-            $scanner = function ($dir) use ($recursively, $driver, &$scanner) {
-                $items = [];
-                $handle = $driver->opendir($dir);
-                while (($basename = readdir($handle)) !== false) {
-                    if ('.' != $basename and '..' != $basename) {
-                        $item = $dir.'/'.$basename;
-                        if ($driver->is_file($item)) {
-                            $file = new File\SFTP($item);
-                            $file->setDriver($driver);
-                            $items[] = $file;
-                        } elseif ($driver->is_dir($item)) {
-                            $directory = new SFTP($item);
-                            $directory->setDriver($driver);
-                            $items[] = $directory;
-                            if ($recursively) {
-                                $items = array_merge($items, $scanner($item));
-                            }
-                        }
-                    }
-                }
-
-                return $items;
-            };
-
-            return $scanner($this->getPath());
+            return parent::items($recursively);
         }
+    
         $items = [];
         foreach ($this->preloadedItems as $item) {
             $items[] = $item;
             if ($item instanceof BaseDirectorySFTP and $recursively) {
-                $items = array_merge($items, $item->directories(true));
+                array_push($items, ...$item->items(true));
             }
         }
 
