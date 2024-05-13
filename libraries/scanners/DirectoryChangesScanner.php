@@ -38,7 +38,7 @@ class DirectoryChangesScanner extends Scanner
 
     public function setIgnorePaths(array $paths): static
     {
-        $this->ignorePaths = array_map(fn (string $p) => trim($p, '/').'/', $paths);
+        $this->ignorePaths = array_map(fn (string $p) => ltrim($p, '/'), $paths);
 
         return $this;
     }

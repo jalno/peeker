@@ -126,7 +126,7 @@ class WordpressScanner extends Scanner
 
         $scanner = new DirectoryChangesScanner($this->actions, $this->home, $this->originalWP);
         $scanner->setExtensions(['php']);
-        $scanner->setIgnorePaths(['wp-content/themes/', 'wp-content/plugins/']);
+        $scanner->setIgnorePaths(['wp-content/themes/', 'wp-content/plugins/', 'wp-config.php']);
         $scanner->scan();
     }
 
