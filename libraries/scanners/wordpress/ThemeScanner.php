@@ -2,24 +2,26 @@
 
 namespace packages\peeker\scanners\wordpress;
 
-use packages\base\http\Client;
 use packages\base\IO\Directory;
-use packages\base\IO\File;
 use packages\base\Log;
 use packages\base\Packages;
-use packages\peeker\ActionConflictException;
-use packages\peeker\actions;
-use packages\peeker\FileScannerTrait;
-use packages\peeker\IAction;
+use packages\peeker\actions\wordpress\ResetWPRocketCache;
 use packages\peeker\Scanner;
+use packages\peeker\Scanners\DirectoryChangesScanner;
+use packages\peeker\WordpressDownloader;
+use packages\peeker\WordpressScript;
 
 class ThemeScanner extends Scanner
 {
-    use FileScannerTrait;
-
     public static function isOriginalTheme(string $theme): bool
     {
         return in_array($theme, [
+            'twentytwentysix',
+            'twentytwentyfive',
+            'twentytwentyfour',
+            'twentytwentythree',
+            'twentytwentytwo',
+            'twentytwentyone',
             'twentytwenty',
             'twentynineteen',
             'twentyseventeen',
@@ -33,7 +35,10 @@ class ThemeScanner extends Scanner
         ]);
     }
 
-    protected $themes = [];
+    /**
+     * @var array<string,array{original:Directory\Local,directory:Directory}>
+     */
+    protected array $themes = [];
 
     public function prepare(): void
     {
@@ -41,7 +46,13 @@ class ThemeScanner extends Scanner
 
         $themes = $this->findThemes();
         foreach ($themes as $theme) {
-            $this->prepareTheme($theme);
+            $log->info('prepare theme', $theme->basename);
+            try {
+                $this->prepareTheme($theme);
+                $log->reply('Done');
+            } catch (\Exception $e) {
+                $log->reply()->error($e->__toString());
+            }
         }
     }
 
@@ -50,86 +61,51 @@ class ThemeScanner extends Scanner
         if (!$this->themes) {
             return;
         }
+        $log = Log::getInstance();
+
         foreach ($this->themes as $theme) {
-            $files = $this->getFiles($theme['directory'], ['js', 'php']);
-            $this->scanTheme($theme, $files);
+            $log->info("Compare theme with it's original:", $theme['directory']->getRelativePath($this->home));
+            $this->scanTheme($theme['directory'], $theme['original']);
         }
     }
 
-    protected function scanTheme(array $theme, \Iterator $files): void
+    protected function scanTheme(Directory $input, Directory\Local $original): void
+    {
+        $scanner = new DirectoryChangesScanner($this->actions, $input, $original);
+        $scanner->setExtensions(['php', 'js']);
+        $scanner->scan();
+        if ($scanner->isInfacted()) {
+            $this->actions->add((new ResetWPRocketCache($this->home))->setReason('infacted-wordpress-theme'));
+        }
+    }
+
+    protected function prepareTheme(Directory $theme): void
     {
         $log = Log::getInstance();
-        foreach ($files as $file) {
-            $action = $this->checkFile($theme, $file);
-            if (!$action) {
-                continue;
-            }
-            $isClean = $action instanceof actions\CleanFile;
-            if (!$isClean) {
-                $path = $file->getRelativePath($this->home);
-                $log->info($path, 'Infacted, Reason:', $action->getReason());
-            }
+        $info = WordpressScript::getThemeInfo($theme);
+
+        $version = null;
+
+        if (isset($info['version'])) {
             try {
-                $this->actions->add($action);
-            } catch (ActionConflictException $conflict) {
-                $old = $conflict->getOldAction();
-                if (
-                    !$old instanceof actions\CleanFile
-                    and !$old instanceof actions\Repair
-                    and !$old instanceof actions\ReplaceFile
-                    and !$old instanceof actions\HandCheckFile
-                ) {
-                    $this->actions->delete($old);
-                    $this->actions->add((new actions\HandCheckFile($file))->setReason('resolving-conflict'));
-                }
+                $log->info('Try to donwload theme with version', $info['version']);
+                $version = WordpressDownloader::getInstance()->theme($theme->basename, $info['version']);
+                $log->reply('Done');
+            } catch (\Exception $e) {
+                $log->reply()->error('failed');
             }
         }
-    }
-
-    protected function checkFile(array $theme, File $file): ?IAction
-    {
-        $isOriginalTheme = self::isOriginalTheme($theme['directory']->basename);
-        $path = $file->getRelativePath($theme['directory']);
-        if (in_array($path, ['header.php', 'single.php'])) {
-            return null;
-        }
-        $original = $theme['original']->file($path);
-        if (!$original->exists()) {
-            if ($isOriginalTheme) {
-                return (new actions\RemoveFile($file))
-                    ->setReason('non-exist-original-theme-file');
-            }
-
-            return (new actions\HandCheckFile($file))
-                ->setReason('non-exist-theme-file');
-        }
-        if ($original->md5() != $file->md5()) {
-            if ($isOriginalTheme) {
-                return (new actions\ReplaceFile($file, $original))
-                    ->setReason('changed-original-theme-file');
-            }
-
-            return (new actions\HandCheckFile($file))
-                ->setReason('changed-theme-file')
-                ->setOriginalFile($original);
-        }
-
-        return (new actions\CleanFile($file))
-            ->setReason('original-theme-file');
-    }
-
-    protected function prepareTheme(Directory $theme)
-    {
-        $log = Log::getInstance();
-        try {
-            $original = $this->download($theme->basename);
-            if (!$original) {
-                $log->warn('not found!');
+        if (!$version) {
+            $log->info('try to find theme from cache directory');
+            $original = Packages::package('peeker')->getStorage('private')->directory('themes/'.$theme->basename);
+            if (!$original->exists()) {
+                $log->reply()->fatal('notfound');
 
                 return;
             }
             $versions = $original->directories(false);
             if ($versions and !$original->files(false)) {
+                $log->reply('Found', count($versions), 'versions');
                 $matches = [];
                 foreach ($versions as $versionDir) {
                     $matches[$versionDir->basename] = $this->checkMatchesOfTheme($theme, $versionDir);
@@ -137,32 +113,22 @@ class ThemeScanner extends Scanner
                 asort($matches);
                 $version = $original->directory(array_keys($matches)[count($matches) - 1]);
             } else {
+                $log->reply('Found', 1, 'versions');
                 $version = $original;
             }
-            $this->themes[$theme->basename] = [
-                'original' => $version,
-                'directory' => $theme,
-            ];
-            $log->info('done, Matched Theme: ', $version->getPath());
-        } catch (\Exception $e) {
-            $log->warn('not found!');
-
-            return;
+            $log->info('matched version: ', $version->getPath());
         }
-        foreach ($this->getFiles($version, ['js', 'php']) as $file) {
-            $path = $file->getRelativePath($version);
-            $local = $theme->file($path);
-            if (!$local->exists()) {
-                $this->actions->add((new actions\ReplaceFile($local, $file))->setReason('missing theme file'));
-            }
-        }
+        $this->themes[$theme->basename] = [
+            'original' => $version,
+            'directory' => $theme,
+        ];
     }
 
-    protected function checkMatchesOfTheme(Directory $theme, Directory $version): int
+    protected function checkMatchesOfTheme(Directory $theme, Directory $original): int
     {
         $matches = 0;
-        foreach ($version->files(true) as $file) {
-            $path = $file->getRelativePath($version);
+        foreach ($original->files(true) as $file) {
+            $path = $file->getRelativePath($original);
             $local = $theme->file($path);
             if ($local->exists() and $local->md5() == $file->md5()) {
                 ++$matches;
@@ -185,44 +151,5 @@ class ThemeScanner extends Scanner
                 yield from $this->findThemes($item);
             }
         }
-    }
-
-    protected function download(string $name): ?Directory
-    {
-        $log = Log::getInstance();
-        $log->info("try find or download theme: {$name}");
-        $repo = Packages::package('peeker')->getHome()->directory('storage/private/themes');
-        if (!$repo->exists()) {
-            $repo->make(true);
-        }
-        $src = $repo->directory($name);
-        if ($src->exists()) {
-            return !$src->isEmpty() ? $src : null;
-        } else {
-            $src->make();
-        }
-        $log->info('downloading theme');
-        $http = new Client([
-            'base_uri' => 'http://peeker.jeyserver.com/',
-        ]);
-        $zipFile = new File\Tmp();
-        try {
-            $http->get("themes/{$name}.zip", [
-                'save_as' => $zipFile,
-            ]);
-        } catch (\Exception $e) {
-            $log->reply()->warn('failed!');
-
-            return null;
-        }
-        $zip = new \ZipArchive();
-        $open = $zip->open($zipFile->getPath());
-        if (true !== $open) {
-            throw new \Exception('Cannot open zip file: '.$open);
-        }
-        $zip->extractTo($src->getPath());
-        $zip->close();
-
-        return $src;
     }
 }

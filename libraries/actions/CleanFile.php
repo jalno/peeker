@@ -23,7 +23,7 @@ class CleanFile extends Action implements IActionFile
 
     public function hasConflict(IAction $other): bool
     {
-        return !$other instanceof static and $other instanceof IActionFile and $other->getFile()->getPath() == $this->file->getPath();
+        return !($other instanceof static) and $other instanceof IActionFile and $other->getFile()->getPath() == $this->file->getPath();
     }
 
     public function isValid(): bool
@@ -35,17 +35,16 @@ class CleanFile extends Action implements IActionFile
     {
     }
 
-    public function serialize()
+    public function __serialize()
     {
-        return serialize([
+        return [
             $this->file,
             $this->reason,
-        ]);
+        ];
     }
 
-    public function unserialize($serialized)
+    public function __unserialize(array $data)
     {
-        $data = unserialize($serialized);
         $this->file = $data[0];
         $this->reason = $data[1];
     }

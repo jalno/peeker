@@ -14,12 +14,10 @@ use packages\peeker\scanners;
 
 class HandCheckPlugin extends Action implements IActionInteractive, IActionDirectory
 {
-    protected $directory;
-    protected $version;
-    protected $interface;
-    protected $answer;
+    protected ?IInterface $interface = null;
+    protected ?string $answer = null;
 
-    public function __construct(Directory $directory, ?string $version)
+    public function __construct(protected Directory $directory, protected ?string $version)
     {
         $this->directory = $directory;
         $this->version = $version;

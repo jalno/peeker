@@ -17,7 +17,7 @@ class PHPScanner extends Scanner
     public function scan(): void
     {
         $log = Log::getInstance();
-        $files = $this->getFiles($this->home, ['php']);
+        $files = $this->getFilesWithNoAction($this->home, ['php']);
         foreach ($files as $file) {
             $path = $file->getRelativePath($this->home);
             $log->debug('check', $path);

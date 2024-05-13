@@ -4,8 +4,21 @@ namespace packages\peeker;
 
 abstract class Action implements IAction
 {
-    protected $scanner;
-    protected $reason;
+    public static function getName(string|IAction $action): string
+    {
+        if (!is_string($action)) {
+            $action = get_class($action);
+        }
+        $namespace = __NAMESPACE__.'\\actions\\';
+        if (str_starts_with(strtolower($action), $namespace)) {
+            $action = substr($action, strlen($namespace));
+        }
+
+        return $action;
+    }
+
+    protected ?IScanner $scanner = null;
+    protected ?string $reason = null;
 
     public function setScanner(?IScanner $scanner): void
     {
@@ -17,7 +30,7 @@ abstract class Action implements IAction
         return $this->scanner;
     }
 
-    public function setReason(string $reason): Action
+    public function setReason(string $reason): static
     {
         $this->reason = $reason;
 

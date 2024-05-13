@@ -2,140 +2,46 @@
 
 namespace packages\peeker\scanners\wordpress;
 
-use packages\base\Exception;
-use packages\base\http\Client;
 use packages\base\IO\Directory;
-use packages\base\IO\File;
 use packages\base\Log;
-use packages\base\Packages;
-use packages\peeker\ActionConflictException;
-use packages\peeker\actions;
-use packages\peeker\FileScannerTrait;
-use packages\peeker\IAction;
+use packages\peeker\actions\RemoveDirectory;
+use packages\peeker\actions\wordpress\HandCheckPlugin;
+use packages\peeker\actions\wordpress\ResetWPRocketCache;
 use packages\peeker\Scanner;
+use packages\peeker\Scanners\DirectoryChangesScanner;
+use packages\peeker\WordpressDownloader;
 use packages\peeker\WordpressScript;
 
 class PluginScanner extends Scanner
 {
-    use FileScannerTrait;
-
     public static function checkPlugin(Directory $plugin): Directory
     {
         if ($plugin->isEmpty()) {
-            throw new PluginException('Empty directory', 101);
+            throw new PluginException('Empty directory', PluginException::EMPTY_PLUGIN);
         }
         $info = WordpressScript::getPluginInfo($plugin);
         if (empty($info)) {
-            throw new PluginException('Plugin damaged', 102);
+            throw new PluginException('Plugin damaged', PluginException::DAMAGED_PLUGIN);
         }
         if (!isset($info['version'])) {
             $info['version'] = null;
         }
-        $key = $plugin->basename.($info['version'] ? '-'.$info['version'] : '');
         try {
-            $original = self::download($plugin->basename, $info['version']);
-            if (!$original) {
-                throw new PluginException('Plugin Original Not found', 103, $info['version']);
-            }
+            $original = WordpressDownloader::getInstance()->plugin($plugin->basename, $info['version']);
 
             return $original;
         } catch (\Exception $e) {
-            throw new PluginException('Plugin Original Not found', 103, $info['version']);
+            throw new PluginException('Plugin Original Not found', PluginException::ORIGINAL_NOTFOUND, $info['version']);
         }
     }
 
-    protected static function download(string $pluginName, ?string $version = null, bool $fallback = true): ?Directory
-    {
-        $log = Log::getInstance();
-        $name = $pluginName;
-        if ('-master' == substr($name, -strlen('-master'))) {
-            $name = substr($name, 0, -strlen('-master'));
-        }
-        $log->info("try find or download plugin: {$name}, version:", $version, ', fallback:', $fallback ? 'yes' : 'no');
-        $repo = Packages::package('peeker')->getHome()->directory('storage/private/plugins');
-        if (!$repo->exists()) {
-            $repo->make(true);
-        }
-        $src = $repo->directory($name);
-        if (!$src->exists()) {
-            $src->make();
-        }
-        $latest = $src->directory('latest');
-        $requestedVersionSrc = ($version ? $src->directory($version) : null);
-        if ($requestedVersionSrc) {
-            if ($requestedVersionSrc->exists()) {
-                if (!$requestedVersionSrc->isEmpty()) {
-                    return $requestedVersionSrc;
-                }
-                if (!$fallback) {
-                    return null;
-                }
-            } else {
-                $requestedVersionSrc->make();
-            }
-        }
-        if (!$requestedVersionSrc) {
-            if ($latest->exists()) {
-                return !$latest->isEmpty() ? $latest : null;
-            } else {
-                $latest->make();
-            }
-        }
-
-        $zipFile = new File\Tmp();
-        $fileName = ($version ? "{$name}.{$version}" : $name);
-        $log->debug("download file: {$fileName}");
-        $log->debug('using downloads.wordpress.org');
-        try {
-            $response = (new Client())->get("https://downloads.wordpress.org/plugin/{$fileName}.zip", [
-                'save_as' => $zipFile,
-            ]);
-            if (200 != $response->getStatusCode()) {
-                throw new Exception('http_status_code');
-            }
-            $log->reply('done');
-        } catch (\Exception $e) {
-            $log->reply('failed!', $e->getMessage());
-            if ($requestedVersionSrc) {
-                $requestedVersionSrc->delete(true);
-            } else {
-                $latest->delete(true);
-            }
-            if (!$src->files(true)) {
-                $src->delete(true);
-            }
-            if ($requestedVersionSrc and $fallback) {
-                $log->debug('try to fallback to find latest version');
-
-                return self::download($name, null, false);
-            }
-
-            return null;
-        }
-        $zip = new \ZipArchive();
-        $open = $zip->open($zipFile->getPath());
-        if (true !== $open) {
-            throw new Exception('Cannot open zip file: '.$open);
-        }
-        $resultDirectory = ($requestedVersionSrc ? $requestedVersionSrc : $latest);
-        $zip->extractTo($resultDirectory->getPath());
-        $zip->close();
-
-        $sameNameDirectory = $resultDirectory->directory($pluginName);
-        if ($sameNameDirectory->exists()) {
-            $sameNameDirectory->move($resultDirectory->getDirectory());
-            $resultDirectory->getDirectory()->directory($pluginName)->rename($resultDirectory->basename);
-        }
-
-        return $resultDirectory;
-    }
-
-    protected $plugins = [];
+    /**
+     * @param array<string,array{directory:Directory,original:Directory\Local}}>
+     */
+    protected array $plugins = [];
 
     public function prepare(): void
     {
-        $log = Log::getInstance();
-
         $plugins = $this->findPlugins();
         foreach ($plugins as $plugin) {
             $this->preparePlugin($plugin);
@@ -147,61 +53,22 @@ class PluginScanner extends Scanner
         if (!$this->plugins) {
             return;
         }
-        foreach ($this->plugins as $plugin) {
-            $files = $this->getFiles($plugin['directory'], ['php', 'js', 'html']);
-            $this->scanPlugin($plugin, $files);
-        }
-    }
-
-    protected function scanPlugin(array $plugin, \Iterator $files)
-    {
         $log = Log::getInstance();
-        $hasInfacted = false;
-        foreach ($files as $file) {
-            $action = $this->checkFile($plugin, $file);
-            $isClean = $action instanceof actions\CleanFile;
-            if (!$isClean) {
-                $path = $file->getRelativePath($this->home);
-                $log->info($path, 'Infacted, Reason:', $action->getReason());
-            }
-            try {
-                $this->actions->add($action);
-                if (!$isClean) {
-                    $hasInfacted = true;
-                }
-            } catch (ActionConflictException $conflict) {
-                $old = $conflict->getOldAction();
-                if (
-                    !$old instanceof actions\CleanFile
-                    and !$old instanceof actions\Repair
-                    and !$old instanceof actions\ReplaceFile
-                    and !$old instanceof actions\HandCheckFile
-                ) {
-                    $this->actions->delete($old);
-                    $this->actions->add((new actions\HandCheckFile($file))->setReason('resolving-conflict'));
-                }
-            }
-        }
-        if ($hasInfacted) {
-            $this->actions->add((new actions\wordpress\ResetWPRocketCache($this->home))->setReason('infacted-wordpress-plugin'));
+
+        foreach ($this->plugins as $plugin) {
+            $log->info("Compare plugin with it's original:", $plugin['directory']->getRelativePath($this->home), 'and', $plugin['original']->getPath());
+            $this->scanPlugin($plugin['directory'], $plugin['original']);
         }
     }
 
-    protected function checkFile(array $plugin, File $file): IAction
+    protected function scanPlugin(Directory $input, Directory\Local $original)
     {
-        $path = $file->getRelativePath($plugin['directory']);
-        $original = $plugin['original']->file($path);
-        if (!$original->exists()) {
-            return (new actions\RemoveFile($file))
-                ->setReason('non-exist-plugin-file');
+        $scanner = new DirectoryChangesScanner($this->actions, $input, $original);
+        $scanner->setExtensions(['php', 'js']);
+        $scanner->scan();
+        if ($scanner->isInfacted()) {
+            $this->actions->add((new ResetWPRocketCache($this->home))->setReason('infacted-wordpress-plugin'));
         }
-        if ($original->md5() != $file->md5()) {
-            return (new actions\ReplaceFile($file, $original))
-                ->setReason('changed-plugin-file');
-        }
-
-        return (new actions\CleanFile($file))
-            ->setReason('original-plugin-file');
     }
 
     protected function preparePlugin(Directory $plugin): void
@@ -216,25 +83,18 @@ class PluginScanner extends Scanner
                 'original' => $original,
             ];
             $log->reply('done');
-
-            foreach ($this->getFiles($original) as $file) {
-                $local = $plugin->file($file->getRelativePath($original));
-                if (!$local->exists()) {
-                    $this->actions->add((new actions\ReplaceFile($local, $file))->setReason('missing plugin file'));
-                }
-            }
         } catch (PluginException $e) {
             $log->reply()->error($e->getMessage());
             switch ($e->getCode()) {
-                case 101:
+                case PluginException::EMPTY_PLUGIN:
                     $log->reply('removing it');
-                    $this->actions->add((new actions\RemoveDirectory($plugin))->setReason('empty-plugin'));
+                    $this->actions->add((new RemoveDirectory($plugin))->setReason('empty-plugin'));
                     break;
-                case 102:
-                    $this->actions->add((new actions\wordpress\HandCheckPlugin($plugin, $e->getVersion()))->setReason('plugin-damaged'));
+                case PluginException::DAMAGED_PLUGIN:
+                    $this->actions->add((new RemoveDirectory($plugin))->setReason('plugin-damaged'));
                     break;
-                case 103:
-                    $this->actions->add((new actions\wordpress\HandCheckPlugin($plugin, $e->getVersion()))->setReason('plugin-notfound'));
+                case PluginException::ORIGINAL_NOTFOUND:
+                    $this->actions->add((new HandCheckPlugin($plugin, $e->getVersion()))->setReason('plugin-notfound'));
                     break;
             }
         }

@@ -128,18 +128,17 @@ class HandCheckFile extends Action implements IActionInteractive, IActionFile
         }
     }
 
-    public function serialize()
+    public function __serialize()
     {
-        return serialize([
+        return [
             $this->file,
             $this->md5,
             $this->reason,
-        ]);
+        ];
     }
 
-    public function unserialize($serialized)
+    public function unserialize(array $data)
     {
-        $data = unserialize($serialized);
         $this->file = $data[0];
         $this->md5 = $data[1];
         $this->reason = $data[2];

@@ -40,17 +40,16 @@ class RemoveDirectory extends Action implements IActionDirectory
         $log->reply('Success');
     }
 
-    public function serialize()
+    public function __serialize()
     {
-        return serialize([
+        return [
             $this->directory,
             $this->reason,
-        ]);
+        ];
     }
 
-    public function unserialize($serialized)
+    public function __unserialize(array $data)
     {
-        $data = unserialize($serialized);
         $this->directory = $data[0];
         $this->reason = $data[1];
     }

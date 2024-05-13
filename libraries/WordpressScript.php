@@ -4,13 +4,13 @@ namespace packages\peeker;
 
 use packages\base\db\MysqliDb;
 use packages\base\Exception;
-use packages\base\IO\directory;
+use packages\base\IO\Directory;
 use packages\base\IO\File;
 use packages\base\Log;
 
 class WordpressScript extends Script
 {
-    public static function getPluginInfo(directory $pluginDir): array
+    public static function getPluginInfo(Directory $pluginDir): array
     {
         $response = [];
         $log = Log::getInstance();
@@ -41,7 +41,7 @@ class WordpressScript extends Script
         foreach ($files as $file) {
             $fileData = $file->read(2048);
             foreach ($template as $field => $regex) {
-                if (preg_match('/^[ \t\/*#@]*'.preg_quote($regex, '/').':(.*)$/mi', $fileData, $matches) and $matches[1]) {
+                if (preg_match('/^(?:[ \t]*<\?php)?[ \t\/*#@]*'.preg_quote($regex, '/').':(.*)$/mi', $fileData, $matches) and $matches[1]) {
                     $response[$field] = trim($matches[1]);
                 }
             }
@@ -49,6 +49,39 @@ class WordpressScript extends Script
 
         return $response;
     }
+
+    public static function getThemeInfo(Directory $theme): array
+    {
+        $log = Log::getInstance();
+        $log->info("get info about theme: '{$theme->basename}'");
+        $template = [
+            'name' => 'Theme Name',
+            'theme-uri' => 'Theme URI',
+            'description' => 'Description',
+            'author' => 'Author',
+            'author-uri' => 'Author URI',
+            'version' => 'Version',
+            'template' => 'Template',
+            'status' => 'Status',
+            'tags' => 'Tags',
+            'text-domain' => 'Text Domain',
+            'domain-path' => 'Domain Path',
+            'requires-wp' => 'Requires at least',
+            'requires-php' => 'Requires PHP',
+        ];
+
+        $response = [];
+        $file = $theme->file('style.css');
+        $fileData = $file->read(8196);
+        foreach ($template as $field => $regex) {
+            if (preg_match('/^(?:[ \t]*<\?php)?[ \t\/*#@]*'.preg_quote($regex, '/').':(.*)$/mi', $fileData, $matches) and $matches[1]) {
+                $response[$field] = trim($matches[1]);
+            }
+        }
+
+        return $response;
+    }
+
     /**
      * @var File
      */
@@ -141,9 +174,9 @@ class WordpressScript extends Script
             $dbInfo = $this->getDatabaseInfo();
             try {
                 $sqlServer = 'localhost';
-                if ($this->home instanceof directory\Ftp) {
+                if ($this->home instanceof Directory\Ftp) {
                     $sqlServer = $this->home->getDriver()->getHostname();
-                } elseif ($this->home instanceof directory\SFtp) {
+                } elseif ($this->home instanceof Directory\SFtp) {
                     $sqlServer = $this->home->getDriver()->getSSH()->getHost();
                     $hunch = $this->hunchDbInfo();
                     if ($hunch) {
@@ -187,7 +220,7 @@ class WordpressScript extends Script
         return [
             'host' => $this->home->getDriver()->getSSH()->getHost(),
             'username' => $matches[1],
-            'password' => trim($matches[2], "\""),
+            'password' => trim($matches[2], '"'),
         ];
     }
 

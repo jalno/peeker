@@ -45,17 +45,16 @@ class RemoveFile extends Action implements IActionFile
         $log->reply('Success');
     }
 
-    public function serialize()
+    public function __serialize()
     {
-        return serialize([
+        return [
             $this->file,
             $this->reason,
-        ]);
+        ];
     }
 
-    public function unserialize($serialized)
+    public function __unserialize($data)
     {
-        $data = unserialize($serialized);
         $this->file = $data[0];
         $this->reason = $data[1];
     }

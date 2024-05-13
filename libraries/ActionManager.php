@@ -2,7 +2,10 @@
 
 namespace packages\peeker;
 
+use packages\base\IO\Directory;
+use packages\base\IO\File;
 use packages\base\{Log};
+use packages\peeker\actions\CleanFile;
 
 class ActionManager
 {
@@ -61,7 +64,7 @@ class ActionManager
         for ($x = 0, $l = count($this->actions); $x < $l; ++$x) {
             $action = $this->actions[$x];
             if (null === $onlyInteractive or (($action instanceof IActionInteractive and $action->hasQuestions()) === $onlyInteractive)) {
-                if (!$action instanceof actions\CleanFile) {
+                if (!$action instanceof CleanFile) {
                     $log->info('Action: '.get_class($action));
                     $this->doAction($action);
                 }
@@ -108,6 +111,65 @@ class ActionManager
     {
         foreach ($this->actions as $action) {
             if (null === $onlyInteractive or $action instanceof IActionInteractive == $onlyInteractive) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return \Generator<null,IActionFile>
+     */
+    public function getActionFiles(): \Generator
+    {
+        foreach ($this->actions as $action) {
+            if ($action instanceof IActionFile) {
+                yield $action;
+            }
+        }
+    }
+
+    /**
+     * @return \Generator<null,IActionDirectory>
+     */
+    public function getActionDirectories(): \Generator
+    {
+        foreach ($this->actions as $action) {
+            if ($action instanceof IActionDirectory) {
+                yield $action;
+            }
+        }
+    }
+
+    /**
+     * @return \Generator<null,IActionFile>
+     */
+    public function getActionsForFile(File $file): \Generator
+    {
+        foreach ($this->getActionFiles() as $action) {
+            if ($action->getFile()->getPath() == $file->getPath()) {
+                yield $action;
+            }
+        }
+    }
+
+    /**
+     * @return \Generator<null,IActionDirectory>
+     */
+    public function getActionsForDirectory(Directory $directory): \Generator
+    {
+        foreach ($this->getActionDirectories() as $action) {
+            if ($action->getDirectory()->getPath() == $directory->getPath()) {
+                yield $action;
+            }
+        }
+    }
+
+    public function isFileMarkAsClean(File $file): bool
+    {
+        foreach ($this->getActionsForFile($file) as $action) {
+            if ($action instanceof CleanFile) {
                 return true;
             }
         }

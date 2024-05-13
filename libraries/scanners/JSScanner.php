@@ -17,7 +17,7 @@ class JSScanner extends Scanner
     public function scan(): void
     {
         $log = Log::getInstance();
-        $files = $this->getFiles($this->home, ['js', 'json']);
+        $files = $this->getFilesWithNoAction($this->home, ['js', 'json']);
         foreach ($files as $file) {
             $path = $file->getRelativePath($this->home);
             $log->debug('check', $path);
@@ -59,8 +59,6 @@ class JSScanner extends Scanner
         $badNames = [];
         $badNamesPatterns = [];
         if (in_array($file->basename, $badNames)) {
-            $this->actions->add();
-
             return (new actions\RemoveFile($file))
                 ->setReason('bad-name-js');
         }
