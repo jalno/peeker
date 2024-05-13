@@ -74,8 +74,7 @@ class WordpressDownloader
         $extracted = $this->extract($zip);
         $content = $extracted->directory($name);
 
-        $cache->getDirectory()->make(true);
-        if (!rename($content->getPath(), $cache->getPath())) {
+        if (!$content->copyTo($cache)) {
             throw new \Exception('Cannot rename '.$content->getPath().' to '.$cache->getPath());
         }
         $log->reply('Done');
@@ -106,8 +105,7 @@ class WordpressDownloader
         $extracted = $this->extract($zip);
         $content = $extracted->directory($name);
 
-        $cache->getDirectory()->make(true);
-        if (!rename($content->getPath(), $cache->getPath())) {
+        if (!$content->copyTo($cache)) {
             throw new \Exception('Cannot rename '.$content->getPath().' to '.$cache->getPath());
         }
         $log->reply('Done');
@@ -134,8 +132,7 @@ class WordpressDownloader
         $extracted = $this->extract($zip);
         $content = $extracted->directory('wordpress');
 
-        $cache->getDirectory()->make(true);
-        if (!rename($content->getPath(), $cache->getPath())) {
+        if (!$content->copyTo($cache)) {
             throw new \Exception('Cannot rename '.$content->getPath().' to '.$cache->getPath());
         }
         $log->reply('Done');
