@@ -7,7 +7,7 @@ use packages\peeker\IInterface;
 
 class CLI implements IInterface
 {
-    public function askQuestion(string $question, ?array $answers = null, \Closure $callback): void
+    public function askQuestion(string $question, ?array $answers, \Closure $callback): void
     {
         while (true) {
             $helpToAsnwer = '';

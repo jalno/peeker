@@ -2,7 +2,7 @@
 
 namespace packages\peeker;
 
-interface IAction extends \Serializable
+interface IAction
 {
     public function getScanner(): ?IScanner;
 

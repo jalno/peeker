@@ -21,9 +21,9 @@ use packages\peeker\scanners;
 
 class Peeker extends Process
 {
-    protected $actions;
-    protected $maxCycles = 5;
-    protected $justInTime = false;
+    protected ActionManager $actions;
+    protected int $maxCycles = 5;
+    protected bool $justInTime = false;
 
     public function scan(array $data)
     {

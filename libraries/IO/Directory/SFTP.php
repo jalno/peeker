@@ -2,7 +2,6 @@
 
 namespace packages\peeker\IO\Directory;
 
-use packages\base\Exception;
 use packages\base\IO as baseIO;
 use packages\base\IO\Directory\SFTP as BaseDirectorySFTP;
 use packages\base\IO\File\SFTP as BaseFileSFTP;
@@ -29,11 +28,11 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
     public function preloadItems(): void
     {
         $log = Log::getInstance();
-        
+
         $root = $this;
         $rootPath = rtrim($root->getPath(), '/').'/';
-        
-        $log->debug("Preloading directories");
+
+        $log->debug('Preloading directories');
 
         $lines = $this->getDriver()->getSSH()->execute("find -P {$rootPath} -type d");
         $lines = explode("\n", $lines);
@@ -41,12 +40,11 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
         $driver = $root->getDriver();
         $root->preloadedItems = [];
         $root->preloadedMd5 = false;
-    
-        for ($x = 1, $l = count($lines); $x < $l - 1; $x++)
-        {
+
+        for ($x = 1, $l = count($lines); $x < $l - 1; ++$x) {
             $path = $lines[$x];
 
-            while(!str_starts_with($path, rtrim($root->getPath(), '/') . '/')) {
+            while (!str_starts_with($path, rtrim($root->getPath(), '/').'/')) {
                 $root = $root->parent;
             }
 
@@ -61,19 +59,18 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
         }
         $log->reply($l - 2);
 
-        $log->debug("Preloading files alongside their md5");
+        $log->debug('Preloading files alongside their md5');
         $lines = $this->getDriver()->getSSH()->execute("find -P {$rootPath} -type f -exec md5sum {} \;");
         $lines = explode("\n", $lines);
 
         $rootPathLength = strlen($rootPath);
-        for ($x = 0, $l = count($lines); $x < $l - 1; $x++)
-        {
+        for ($x = 0, $l = count($lines); $x < $l - 1; ++$x) {
             $line = $lines[$x];
             $md5 = substr($line, 0, 32);
             $path = substr($line, 32 + 2);
-        
+
             $dirpath = substr($path, $rootPathLength);
-            $dirpath = explode("/", $dirpath);
+            $dirpath = explode('/', $dirpath);
             array_pop($dirpath);
 
             $dir = $this;
@@ -134,7 +131,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
         if (!$this->isPreloadItems()) {
             return parent::files($recursively);
         }
-    
+
         $items = [];
         foreach ($this->preloadedItems as $item) {
             if ($item instanceof BaseFileSFTP) {
@@ -172,7 +169,7 @@ class SFTP extends BaseDirectorySFTP implements IPreloadedDirectory, IPreloadedM
         if (!$this->isPreloadItems()) {
             return parent::items($recursively);
         }
-    
+
         $items = [];
         foreach ($this->preloadedItems as $item) {
             $items[] = $item;
