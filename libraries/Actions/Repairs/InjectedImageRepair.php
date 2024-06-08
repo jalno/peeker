@@ -27,7 +27,7 @@ class InjectedImageRepair extends Repair implements IActionFile
 
     public function hasConflict(IAction $other): bool
     {
-        return !$other instanceof Static and $other instanceof IActionFile and $other->getFile()->getPath() == $this->file->getPath();
+        return !$other instanceof static and $other instanceof IActionFile and $other->getFile()->getPath() == $this->file->getPath();
     }
 
     public function isValid(): bool

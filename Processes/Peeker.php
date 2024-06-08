@@ -135,7 +135,7 @@ class Peeker extends Process
     {
         $count = 0;
         foreach ($this->actions->getActions() as $action) {
-            if (!$countCleans and $action instanceof actions\CleanFile) {
+            if (!$countCleans and $action instanceof Actions\CleanFile) {
                 continue;
             }
             if ($action instanceof IActionInteractive) {
