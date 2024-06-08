@@ -2,8 +2,8 @@
 
 namespace packages\peeker;
 
-use packages\base\http\Client;
-use packages\base\http\ResponseException;
+use packages\base\HTTP\Client;
+use packages\base\HTTP\ResponseException;
 use packages\base\IO\Directory;
 use packages\base\IO\File;
 use packages\base\Log;
@@ -29,12 +29,12 @@ class WordpressDownloader
         $this->cacheRoot = Packages::package('peeker')->getStorage('private')->getRoot();
     }
 
-    public function download(string $url): File\Tmp
+    public function download(string $url): File\TMP
     {
         $log = Log::getInstance();
 
         $log->info("Downloading {$url}");
-        $file = new File\Tmp();
+        $file = new File\TMP();
         try {
             $response = (new Client())->get($url, [
                 'save_as' => $file,
@@ -157,7 +157,7 @@ class WordpressDownloader
 
     private function extract(File\Local $zipFile): Directory\Tmp
     {
-        $target = new Directory\Tmp();
+        $target = new Directory\TMP();
         $zip = new \ZipArchive();
         $open = $zip->open($zipFile->getPath());
         if (true !== $open) {

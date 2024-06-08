@@ -5,7 +5,7 @@ namespace packages\peeker;
 use packages\base\IO\Directory;
 use packages\base\IO\File;
 use packages\base\{Log};
-use packages\peeker\actions\CleanFile;
+use packages\peeker\Actions\CleanFile;
 
 class ActionManager
 {

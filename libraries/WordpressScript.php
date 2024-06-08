@@ -2,7 +2,7 @@
 
 namespace packages\peeker;
 
-use packages\base\db\MysqliDb;
+use packages\base\DB\MysqliDb;
 use packages\base\Exception;
 use packages\base\IO\Directory;
 use packages\base\IO\File;
