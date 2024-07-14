@@ -15,3 +15,5 @@ RUN rm -fr packages/dockerize; \
 	find /var/www/html -type d -name ".docker" -prune -exec rm -fr {} \;;
 
 WORKDIR /var/www/html
+
+CMD ["/usr/local/bin/php"]
