@@ -213,6 +213,11 @@ class PHPScanner extends Scanner
                 'action' => new actions\repairs\InjectedFirstlinePHPRepair($file, 'second-line'),
             ],
             [
+                'type' => 'exact',
+                'needle' => '_set_fetas_tag',
+                'action' => new actions\repairs\InjectedFetasBetasRepair($file, 'default'),
+            ],
+            [
                 'type' => 'pattern',
                 'needle' => '/<script.+ src=[\"\'].+lowerbeforwarden.+[\"\'].*><\/script>/i',
                 'action' => new actions\HandCheckFile($file),
